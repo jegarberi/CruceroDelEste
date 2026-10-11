@@ -58,7 +58,7 @@ export function Footer() {
     <footer style={{ width: "100%", position: "relative", overflow: "hidden", background: "var(--color-navy-dark)", minHeight: "400px" }}>
       {/* Background image */}
       <Image
-        src="/secciones/Footer.png"
+        src="/secciones/Footer.webp"
         alt=""
         fill
         style={{ objectFit: "cover", objectPosition: "right center", zIndex: 0 }}
@@ -89,7 +89,7 @@ export function Footer() {
       >
         {/* Top — Logo + Headline */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "16px" }}>
-          <Image src="/assets/logo-rioparana.png" alt="Expreso Río Paraná" height={56} width={220} />
+          <Image src="/assets/logo-rioparana.webp" alt="Expreso Río Paraná" height={56} width={220} />
           <Heading as="h2" size="lg" color="white" accentLine="acercamos destinos." accentColor="aqua">
             Conectamos personas,
           </Heading>

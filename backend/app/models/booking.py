@@ -12,7 +12,6 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -115,13 +114,16 @@ class Passenger(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=sa.text("now()"))
 
     __table_args__ = (
-        UniqueConstraint("seat_id"),
+        # No unique: un asiento liberado (reserva expirada o reembolsada) se
+        # revende y conserva el pasajero anterior como historial. La
+        # exclusividad la garantiza reserve_seats (lock de fila + status).
+        Index("idx_passengers_seat", "seat_id"),
         Index("idx_passengers_booking", "booking_id"),
         Index("idx_passengers_email", "email"),
     )
 
     booking = relationship("Booking", back_populates="passengers")
-    seat = relationship("Seat", back_populates="passenger")
+    seat = relationship("Seat")
 
 
 class RefundRequest(Base):

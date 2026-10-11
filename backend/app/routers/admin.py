@@ -91,7 +91,7 @@ async def login(
         key="admin_token",
         value=token,
         httponly=True,
-        secure=(settings.environment == "production"),
+        secure=settings.cookie_secure,
         samesite="strict",
         max_age=settings.jwt_expiry_minutes * 60,
     )
@@ -106,7 +106,7 @@ async def logout(
     response.delete_cookie(
         "admin_token",
         httponly=True,
-        secure=(settings.environment == "production"),
+        secure=settings.cookie_secure,
         samesite="strict",
     )
     return {"ok": True}

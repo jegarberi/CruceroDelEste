@@ -4,34 +4,41 @@ import re
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.deps import get_db, trip_load_options
 from app.limiter import limiter
-from app.errors import NotFoundError, PaymentProcessingError, RefundWindowExpiredError
-from app.models.booking import Booking, BookingStatusEnum
+from app.errors import NotFoundError, PaymentProcessingError, RefundWindowExpiredError, SeatAlreadyReleasedError
+from app.models.booking import Booking, BookingStatusEnum, Passenger
 from app.models.trip import Route, Trip, TripStatusEnum
 from app.schemas.bookings import (
     BookingCreate,
     BookingCreateResponse,
     BookingRead,
     PassengerRead,
+    PaymentCreate,
+    PaymentCreateResponse,
     RefundRequestCreate,
     RefundRequestRead,
 )
 from app.services.booking import (
+    BookingNotFound,
     InternationalRouteRequiredError,
     PassengerData,
+    confirm_booking,
     create_booking,
     create_refund_request,
     expire_booking,
     mark_booking_refunded,
 )
+from app.services.email import send_confirmation_email
 from app.services.payment import (
+    PreferenceItem,
     create_preference,
+    get_payment,
     create_refund,
     generate_confirmation_token,
     _CONFIRMATION_TOKEN_WINDOW_MINUTES,
@@ -82,7 +89,7 @@ async def create_booking_endpoint(
     ]
 
     try:
-        booking, items = await create_booking(
+        booking, _ = await create_booking(
             db,
             booking_in.trip_id,
             booking_in.seat_ids,
@@ -110,26 +117,6 @@ async def create_booking_endpoint(
 
     await db.commit()
 
-    payer_email = booking_in.contact_email
-
-    try:
-        preference = await create_preference(booking.id, items, payer_email)
-    except PaymentProcessingError as exc:
-        logger.error(
-            "create_preference_failed booking_id=%s trip_id=%s status_code=%s",
-            booking.id,
-            booking_in.trip_id,
-            exc.status_code,
-        )
-        try:
-            await expire_booking(db, booking.id)
-            await db.commit()
-        except Exception:
-            logger.error("cleanup_failed booking_id=%s", booking.id)
-        raise HTTPException(status_code=502, detail="payment_gateway_error") from exc
-
-    booking.mp_preference_id = preference.preference_id
-    await db.commit()
     await db.refresh(booking, attribute_names=["passengers"])
 
     return BookingCreateResponse(
@@ -141,8 +128,66 @@ async def create_booking_endpoint(
         total_amount=booking.total_amount,
         expires_at=booking.expires_at,
         passengers=[PassengerRead.model_validate(p) for p in booking.passengers],
-        init_point=preference.init_point,
+        confirmation_token=generate_confirmation_token(booking.id),
     )
+
+
+@router.post("/{booking_id}/payments", response_model=PaymentCreateResponse, status_code=201)
+@limiter.limit("10/minute")
+async def create_booking_payment(
+    request: Request,
+    booking_id: UUID,
+    payment_in: PaymentCreate,
+    token: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> PaymentCreateResponse:
+    """Start a payment for a pending booking with the chosen method.
+
+    `method` is validated by the schema; a new method is a new Literal value
+    plus a branch here.
+    """
+    _FORBIDDEN = HTTPException(status_code=403, detail="Forbidden")
+
+    expected = generate_confirmation_token(booking_id)
+    if not hmac_lib.compare_digest(expected, token):
+        raise _FORBIDDEN
+
+    result = await db.execute(select(Booking).where(Booking.id == booking_id))
+    booking = result.scalar_one_or_none()
+    if booking is None:
+        raise _FORBIDDEN
+
+    if (
+        booking.status != BookingStatusEnum.pending_payment
+        or booking.expires_at <= datetime.now(timezone.utc)
+    ):
+        raise HTTPException(status_code=409, detail="booking_not_payable")
+
+    # One line item for the stored total: prices move with sales, so the amount
+    # charged must be what the booking recorded, not a recalculation.
+    items = [
+        PreferenceItem(
+            title=f"Pasajes Expreso Río Paraná — reserva {booking.booking_code}",
+            quantity=1,
+            unit_price=booking.total_amount,
+        )
+    ]
+
+    try:
+        preference = await create_preference(booking.id, items, booking.contact_email)
+    except PaymentProcessingError as exc:
+        # The booking stays pending so the buyer can retry until it expires.
+        logger.error(
+            "create_preference_failed booking_id=%s status_code=%s",
+            booking.id,
+            exc.status_code,
+        )
+        raise HTTPException(status_code=502, detail="payment_gateway_error") from exc
+
+    booking.mp_preference_id = preference.preference_id
+    await db.commit()
+
+    return PaymentCreateResponse(method=payment_in.method, redirect_url=preference.init_point)
 
 
 _BOOKING_CODE_RE = re.compile(r"^ERP-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$")
@@ -236,6 +281,13 @@ async def get_booking(
     if not hmac_lib.compare_digest(expected, token):
         raise _FORBIDDEN
 
+    return await _read_booking(db, booking_id)
+
+
+async def _read_booking(db: AsyncSession, booking_id: UUID) -> BookingRead:
+    """Load a booking for its buyer. The caller has already checked the token."""
+    _FORBIDDEN = HTTPException(status_code=403, detail="Forbidden")
+
     result = await db.execute(
         select(Booking)
         .options(
@@ -248,6 +300,8 @@ async def get_booking(
             selectinload(Booking.passengers),
         )
         .where(Booking.id == booking_id)
+        # This session may already hold the row from before a confirmation.
+        .execution_options(populate_existing=True)
     )
     booking = result.scalar_one_or_none()
     if booking is None:
@@ -259,3 +313,124 @@ async def get_booking(
             raise _FORBIDDEN
 
     return BookingRead.model_validate(booking)
+
+
+@router.post("/{booking_id}/payments/{payment_id}/verify", response_model=BookingRead)
+@limiter.limit("10/minute")
+async def verify_booking_payment(
+    request: Request,
+    booking_id: UUID,
+    payment_id: str = Path(pattern=r"^\d{1,20}$"),
+    token: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> BookingRead:
+    """Confirm a booking by asking MercadoPago about the payment the buyer came back with.
+
+    Same outcome as the payment webhook, without waiting for it: the buyer
+    returns from checkout with a payment id, and we check it ourselves using
+    the access token. The id comes from the browser, so nothing about it is
+    trusted; only what MercadoPago reports for it (approved, and created for
+    this very booking) confirms anything. Always returns the booking as it is
+    after the check.
+    """
+    expected = generate_confirmation_token(booking_id)
+    if not hmac_lib.compare_digest(expected, token):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    result = await db.execute(select(Booking).where(Booking.id == booking_id))
+    booking = result.scalar_one_or_none()
+    if booking is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if booking.status == BookingStatusEnum.pending_payment:
+        # Ask MercadoPago before taking any lock: this is a network call.
+        try:
+            payment = await get_payment(payment_id)
+        except PaymentProcessingError as exc:
+            logger.error(
+                "verify_get_payment_failed booking_id=%s payment_id=%s status_code=%s",
+                booking_id, payment_id, exc.status_code,
+            )
+            raise HTTPException(status_code=502, detail="payment_gateway_error") from exc
+
+        if payment.status == "approved" and payment.external_reference == str(booking_id):
+            await _confirm_once(db, booking_id, payment.payment_id)
+        else:
+            logger.warning(
+                "verify_payment_not_applicable booking_id=%s payment_id=%s status=%s reference_matches=%s",
+                booking_id, payment_id, payment.status, payment.external_reference == str(booking_id),
+            )
+
+    return await _read_booking(db, booking_id)
+
+
+@router.post("/{booking_id}/release", response_model=BookingRead)
+@limiter.limit("10/minute")
+async def release_booking(
+    request: Request,
+    booking_id: UUID,
+    token: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> BookingRead:
+    """Let the buyer give up an unpaid booking so its seats go back on sale now.
+
+    Same effect as the booking timing out (expire_booking): a no-op unless it is
+    still pending payment. Always returns the booking as it is afterwards.
+    """
+    expected = generate_confirmation_token(booking_id)
+    if not hmac_lib.compare_digest(expected, token):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        await expire_booking(db, booking_id)
+    except BookingNotFound:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    await db.commit()
+
+    return await _read_booking(db, booking_id)
+
+
+async def _confirm_once(db: AsyncSession, booking_id: UUID, mp_payment_id: str) -> None:
+    """Confirm the booking and email the passengers, unless someone already did.
+
+    The webhook locks the same row with FOR UPDATE, so whichever of the two
+    gets there first confirms and sends the email; the other finds it confirmed.
+    """
+    result = await db.execute(
+        select(Booking)
+        .where(Booking.id == booking_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if result.scalar_one().status != BookingStatusEnum.pending_payment:
+        return
+
+    try:
+        await confirm_booking(db, booking_id, mp_payment_id)
+        await db.commit()
+    except SeatAlreadyReleasedError as exc:
+        # Paid after the booking expired and the seats went back on sale; same
+        # handling as the webhook: log it for manual follow-up.
+        logger.error(
+            "verify_seat_already_released booking_id=%s payment_id=%s seat_id=%s",
+            booking_id, mp_payment_id, exc.seat_id,
+        )
+        return
+
+    await _send_confirmation_email(db, booking_id)
+
+
+async def _send_confirmation_email(db: AsyncSession, booking_id: UUID) -> None:
+    result = await db.execute(
+        select(Booking)
+        .where(Booking.id == booking_id)
+        .options(
+            selectinload(Booking.passengers).selectinload(Passenger.seat),
+            selectinload(Booking.trip).options(trip_load_options()),
+        )
+        .execution_options(populate_existing=True)
+    )
+    try:
+        await send_confirmation_email(result.scalar_one())
+    except Exception as exc:  # the booking is confirmed either way
+        logger.warning("verify_confirmation_email_failed booking_id=%s error=%s", booking_id, exc)

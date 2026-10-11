@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.booking import expire_booking
@@ -168,9 +169,11 @@ async def test_post_bookings_happy_path_201(client: AsyncClient, db: AsyncSessio
     assert data["total_amount"] == 24500
     assert "id" in data
     assert "expires_at" in data
-    assert "init_point" in data
     assert isinstance(data["booking_code"], str) and data["booking_code"]
-    assert data["init_point"].startswith("https://")
+    # Creating a booking no longer talks to MercadoPago; the buyer gets the
+    # token needed to pay it from the payment page.
+    assert "init_point" not in data
+    assert data["confirmation_token"] == generate_confirmation_token(uuid.UUID(data["id"]))
 
     assert len(data["passengers"]) == 1
     pax = data["passengers"][0]
@@ -471,22 +474,270 @@ async def test_post_bookings_py_ar_route_accepted(client: AsyncClient, db: Async
     assert resp.json()["status"] == "pending_payment"
 
 
-async def test_post_bookings_mp_failure_returns_502(
+# ---------------------------------------------------------------------------
+# POST /bookings/{id}/payments
+# ---------------------------------------------------------------------------
+
+def _pay_url(booking_id, token=None) -> str:
+    return f"/bookings/{booking_id}/payments?token={token or generate_confirmation_token(booking_id)}"
+
+
+async def test_post_bookings_does_not_create_mp_preference(
     client: AsyncClient, db: AsyncSession, mock_mp_sdk
 ):
     trip = await _make_scheduled_trip(db)
     seat = await _make_seat(db, trip)
     await _add_tranche(db, trip, SeatTypeEnum.cama)
 
+    resp = await client.post("/bookings", json=_booking_payload(trip.id, seat.id))
+
+    assert resp.status_code == 201
+    mock_mp_sdk.preference.return_value.create.assert_not_called()
+
+
+async def test_post_booking_payment_returns_redirect_and_stores_preference(
+    client: AsyncClient, db: AsyncSession, mock_mp_sdk
+):
+    booking = await _make_booking_in_db(db)
+    await db.commit()
+
+    resp = await client.post(_pay_url(booking.id), json={"method": "mercadopago"})
+
+    assert resp.status_code == 201
+    assert resp.json() == {
+        "method": "mercadopago",
+        "redirect_url": "https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=fake",
+    }
+    await db.refresh(booking)
+    assert booking.mp_preference_id == "fake-preference-id"
+
+    # Charged amount is the stored total, and every return path lands on /confirmacion.
+    body = mock_mp_sdk.preference.return_value.create.call_args.args[0]
+    assert sum(i["unit_price"] * i["quantity"] for i in body["items"]) == 24500
+    assert body["external_reference"] == str(booking.id)
+    assert len(set(body["back_urls"].values())) == 1
+    assert "/confirmacion?booking_id=" in body["back_urls"]["failure"]
+    # The test FRONTEND_URL is plain http, and MP rejects auto_return for those.
+    assert "auto_return" not in body
+    # No deferred payments: cash vouchers, ATM and transfers are excluded.
+    excluded = {t["id"] for t in body["payment_methods"]["excluded_payment_types"]}
+    assert excluded == {"ticket", "atm", "bank_transfer"}
+    assert body["binary_mode"] is True
+
+
+async def test_post_booking_payment_wrong_token_returns_403(
+    client: AsyncClient, db: AsyncSession
+):
+    booking = await _make_booking_in_db(db)
+    await db.commit()
+
+    resp = await client.post(_pay_url(booking.id, "nope"), json={"method": "mercadopago"})
+
+    assert resp.status_code == 403
+
+
+async def test_post_booking_payment_unknown_method_returns_422(
+    client: AsyncClient, db: AsyncSession
+):
+    booking = await _make_booking_in_db(db)
+    await db.commit()
+
+    resp = await client.post(_pay_url(booking.id), json={"method": "bitcoin"})
+
+    assert resp.status_code == 422
+
+
+async def test_post_booking_payment_expired_booking_returns_409(
+    client: AsyncClient, db: AsyncSession, mock_mp_sdk
+):
+    booking = await _make_booking_in_db(db)
+    booking.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    await db.commit()
+
+    resp = await client.post(_pay_url(booking.id), json={"method": "mercadopago"})
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "booking_not_payable"
+    mock_mp_sdk.preference.return_value.create.assert_not_called()
+
+
+async def test_post_booking_payment_mp_failure_returns_502_and_keeps_booking_pending(
+    client: AsyncClient, db: AsyncSession, mock_mp_sdk
+):
+    booking = await _make_booking_in_db(db)
+    await db.commit()
+
     mock_mp_sdk.preference.return_value.create.return_value = {
         "status": 500,
         "response": {},
     }
 
-    resp = await client.post("/bookings", json=_booking_payload(trip.id, seat.id))
+    resp = await client.post(_pay_url(booking.id), json={"method": "mercadopago"})
 
     assert resp.status_code == 502
     assert resp.json()["detail"] == "payment_gateway_error"
+    await db.refresh(booking)
+    assert booking.status == BookingStatusEnum.pending_payment
+
+
+# ---------------------------------------------------------------------------
+# POST /bookings/{id}/payments/{payment_id}/verify
+# ---------------------------------------------------------------------------
+
+def _verify_url(booking_id, payment_id="123456", token=None) -> str:
+    token = token or generate_confirmation_token(booking_id)
+    return f"/bookings/{booking_id}/payments/{payment_id}/verify?token={token}"
+
+
+def _mp_payment(mock_mp_sdk, *, status: str, external_reference: str) -> None:
+    mock_mp_sdk.payment.return_value.get.return_value = {
+        "status": 200,
+        "response": {
+            "id": 123456,
+            "status": status,
+            "status_detail": "accredited",
+            "external_reference": external_reference,
+        },
+    }
+
+
+async def test_verify_confirms_booking_when_mp_reports_approved(
+    client: AsyncClient, db: AsyncSession, mock_mp_sdk
+):
+    booking = await _make_booking_in_db(db)
+    await db.commit()
+    _mp_payment(mock_mp_sdk, status="approved", external_reference=str(booking.id))
+
+    resp = await client.post(_verify_url(booking.id))
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "confirmed"
+    await db.refresh(booking)
+    assert booking.status == BookingStatusEnum.confirmed
+    assert booking.mp_payment_id == "123456"
+
+
+async def test_verify_does_not_confirm_unapproved_payment(
+    client: AsyncClient, db: AsyncSession, mock_mp_sdk
+):
+    booking = await _make_booking_in_db(db)
+    await db.commit()
+    _mp_payment(mock_mp_sdk, status="rejected", external_reference=str(booking.id))
+
+    resp = await client.post(_verify_url(booking.id))
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending_payment"
+
+
+async def test_verify_does_not_confirm_with_another_bookings_payment(
+    client: AsyncClient, db: AsyncSession, mock_mp_sdk
+):
+    # An approved payment that was made for a different booking must not
+    # confirm this one, whatever payment id the browser sends.
+    booking = await _make_booking_in_db(db)
+    await db.commit()
+    _mp_payment(mock_mp_sdk, status="approved", external_reference=str(uuid.uuid4()))
+
+    resp = await client.post(_verify_url(booking.id))
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending_payment"
+
+
+async def test_verify_wrong_token_returns_403_without_calling_mp(
+    client: AsyncClient, db: AsyncSession, mock_mp_sdk
+):
+    booking = await _make_booking_in_db(db)
+    await db.commit()
+
+    resp = await client.post(_verify_url(booking.id, token="nope"))
+
+    assert resp.status_code == 403
+    mock_mp_sdk.payment.return_value.get.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# POST /bookings/{id}/release
+# ---------------------------------------------------------------------------
+
+def _release_url(booking_id, token=None) -> str:
+    return f"/bookings/{booking_id}/release?token={token or generate_confirmation_token(booking_id)}"
+
+
+async def _seat_status(db: AsyncSession, booking: Booking) -> SeatStatusEnum:
+    result = await db.execute(
+        select(Seat.status)
+        .join(Passenger, Passenger.seat_id == Seat.id)
+        .where(Passenger.booking_id == booking.id)
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one()
+
+
+async def test_release_expires_pending_booking_and_frees_its_seat(client: AsyncClient, db: AsyncSession):
+    booking = await _make_booking_in_db(db)
+    await db.commit()
+
+    resp = await client.post(_release_url(booking.id))
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "expired"
+    assert await _seat_status(db, booking) == SeatStatusEnum.available
+
+
+async def test_release_wrong_token_returns_403_and_keeps_the_seat(client: AsyncClient, db: AsyncSession):
+    booking = await _make_booking_in_db(db)
+    await db.commit()
+
+    resp = await client.post(_release_url(booking.id, token="nope"))
+
+    assert resp.status_code == 403
+    assert await _seat_status(db, booking) == SeatStatusEnum.reserved
+
+
+async def test_release_does_not_touch_a_confirmed_booking(client: AsyncClient, db: AsyncSession):
+    booking = await _make_booking_in_db(db)
+    booking.status = BookingStatusEnum.confirmed
+    await db.commit()
+
+    resp = await client.post(_release_url(booking.id))
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "confirmed"
+    assert await _seat_status(db, booking) == SeatStatusEnum.reserved
+
+
+async def test_verify_rejects_non_numeric_payment_id(client: AsyncClient, db: AsyncSession):
+    booking = await _make_booking_in_db(db)
+    await db.commit()
+
+    resp = await client.post(_verify_url(booking.id, payment_id="abc"))
+
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# POST /dev/payments  (mounted because the test env is not production)
+# ---------------------------------------------------------------------------
+
+async def test_post_dev_payment_creates_preference_without_booking(
+    client: AsyncClient, mock_mp_sdk
+):
+    resp = await client.post("/dev/payments", json={"amount": 1500, "title": "Prueba"})
+
+    assert resp.status_code == 201
+    assert resp.json()["redirect_url"].startswith("https://")
+    body = mock_mp_sdk.preference.return_value.create.call_args.args[0]
+    assert body["items"][0]["unit_price"] == 1500
+    assert body["external_reference"].startswith("dev-test-")
+    assert "notification_url" not in body
+
+
+async def test_post_dev_payment_rejects_non_positive_amount(client: AsyncClient):
+    resp = await client.post("/dev/payments", json={"amount": 0})
+
+    assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------

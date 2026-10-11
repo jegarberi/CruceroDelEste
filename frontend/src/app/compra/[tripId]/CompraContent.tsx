@@ -223,7 +223,7 @@ export function CompraContent({ tripId }: CompraContentProps) {
 
       if (res.status === 201) {
         const data = await res.json();
-        window.location.href = data.init_point;
+        window.location.href = `/pago?booking_id=${data.id}&token=${encodeURIComponent(data.confirmation_token)}`;
         return;
       }
 

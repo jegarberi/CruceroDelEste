@@ -1,0 +1,78 @@
+# Stack aislado para las pruebas E2E. No comparte base, red ni puertos con el
+# stack de desarrollo (docker-compose.yml de la raíz).
+#
+#   backend         http://localhost:8811
+#   frontend        http://localhost:8812
+#   frontend-admin  http://localhost:8813
+#
+# La base vive en tmpfs: cada `down` la borra.
+name: erp-e2e
+
+services:
+  postgres:
+    image: postgres:16.14
+    environment:
+      POSTGRES_USER: e2e
+      POSTGRES_PASSWORD: e2e
+      POSTGRES_DB: e2e
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U e2e -d e2e"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  migrate:
+    build: ../backend
+    env_file: ../backend/.env
+    environment: &backend-env
+      DATABASE_URL: postgresql+asyncpg://e2e:e2e@postgres:5432/e2e
+      SYNC_DATABASE_URL: postgresql://e2e:e2e@postgres:5432/e2e
+      FRONTEND_URL: http://localhost:8812
+      BACKEND_URL: http://localhost:8811
+      CORS_ORIGINS: '["http://localhost:8812","http://localhost:8813"]'
+      ENVIRONMENT: dev
+      BOOKING_EXPIRY_MINUTES: "15"
+      # De backend/.env solo se hereda el token de MercadoPago (crear la
+      # preferencia y redirigir). Nada de emails reales ni webhooks.
+      RESEND_API_KEY: re_e2e_dummy
+      MERCADOPAGO_WEBHOOK_ENABLED: "false"
+      # slowapi lo lee del entorno: sin esto la suite choca con 10/minute.
+      RATELIMIT_ENABLED: "false"
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build: ../backend
+    env_file: ../backend/.env
+    environment: *backend-env
+    ports:
+      - "8811:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8811
+    ports:
+      - "8812:3000"
+
+  frontend-admin:
+    build:
+      context: ../frontend-admin
+      args:
+        VITE_API_BASE_URL: http://localhost:8811
+    ports:
+      - "8813:80"

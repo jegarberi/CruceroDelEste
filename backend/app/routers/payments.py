@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.deps import get_db, trip_load_options
 from app.errors import ChargebackAlreadyInStatusError, InvalidWebhookSignature, PaymentProcessingError, SeatAlreadyReleasedError
 from app.models.booking import Booking, BookingStatusEnum, Passenger
@@ -25,6 +26,7 @@ _OK = {"status": "ok"}
 _IGN_INVALID_SIG = {"status": "ignored", "reason": "invalid_signature"}
 _IGN_MALFORMED = {"status": "ignored", "reason": "malformed_payload"}
 _IGN_NO_BOOKING = {"status": "ignored", "reason": "booking_not_found"}
+_IGN_DISABLED = {"status": "ignored", "reason": "webhook_disabled"}
 _ERR = {"status": "error"}
 
 
@@ -39,6 +41,10 @@ async def mercadopago_webhook(
     Returns 500 only for transient server errors (DB down, etc.) where a retry
     from MP is genuinely useful.
     """
+    if not settings.mercadopago_webhook_enabled:
+        # Still 200: anything else makes MercadoPago keep retrying.
+        return JSONResponse(_IGN_DISABLED)
+
     try:
         # --- Step 1: data.id comes from the query string, NOT the JSON body. ---
         data_id: str | None = request.query_params.get("data.id")

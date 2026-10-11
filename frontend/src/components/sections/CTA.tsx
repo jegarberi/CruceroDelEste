@@ -28,7 +28,7 @@ export function CTA() {
       >
         {/* Background image */}
         <Image
-          src="/secciones/CTA.png"
+          src="/secciones/CTA.webp"
           alt=""
           fill
           priority={false}

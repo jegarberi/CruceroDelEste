@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
@@ -102,4 +103,15 @@ class BookingCreateResponse(BaseModel):
     total_amount: int
     expires_at: datetime
     passengers: list[PassengerRead]
-    init_point: str
+    # Same token GET /bookings/{id} expects; the buyer needs it to load and pay
+    # the booking from the payment page.
+    confirmation_token: str
+
+
+class PaymentCreate(BaseModel):
+    method: Literal["mercadopago"]
+
+
+class PaymentCreateResponse(BaseModel):
+    method: str
+    redirect_url: str

@@ -59,5 +59,6 @@ export interface BookingRead {
   status: string
   contact_email: string
   total_amount: number
+  expires_at: string
   passengers: PassengerRead[]
 }

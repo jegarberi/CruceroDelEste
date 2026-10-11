@@ -24,6 +24,9 @@ from app.schemas.trips import RouteRead, SeatRead, StopRead, TripRead
 
 logger = logging.getLogger(__name__)
 
+# Hora de Argentina. Offset fijo: no hay horario de verano desde 2009.
+_ART = timezone(timedelta(hours=-3))
+
 router = APIRouter(prefix="/trips", tags=["trips"])
 stops_router = APIRouter(prefix="/stops", tags=["stops"])
 
@@ -74,8 +77,10 @@ async def list_trips(
         )
 
     if departure_date is not None:
-        day_start = datetime.combine(departure_date, time.min, tzinfo=timezone.utc)
-        day_end = datetime.combine(departure_date, time.max, tzinfo=timezone.utc)
+        # El comprador busca por fecha local: un viaje de las 21:30 en Buenos
+        # Aires es 00:30 UTC del día siguiente.
+        day_start = datetime.combine(departure_date, time.min, tzinfo=_ART)
+        day_end = datetime.combine(departure_date, time.max, tzinfo=_ART)
         query = query.where(
             Trip.departure_at >= day_start,
             Trip.departure_at <= day_end,

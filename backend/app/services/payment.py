@@ -14,6 +14,7 @@ production implementations):
 
 Public API (unchanged from previous version):
   create_preference(booking_id, items, payer_email) -> CreatedPreference
+  create_test_preference(amount, title) -> CreatedPreference  (dev only, no booking)
   get_payment(payment_id) -> PaymentDetails
   verify_webhook_signature(data_id, x_signature, x_request_id) -> None  (raises on failure)
 """
@@ -74,6 +75,7 @@ class PreferenceItem:
 class CreatedPreference:
     preference_id: str
     init_point: str  # MP-hosted checkout URL to redirect the buyer to
+    sandbox_init_point: str | None = None
 
 
 @dataclass
@@ -98,6 +100,11 @@ async def create_preference(
     On success returns the preference ID and the init_point URL to redirect
     the buyer. Raises PaymentProcessingError on any non-2xx response.
     """
+    return_url = (
+        f"{settings.frontend_url}/confirmacion"
+        f"?booking_id={booking_id}"
+        f"&token={generate_confirmation_token(booking_id)}"
+    )
     body = {
         "items": [
             {
@@ -108,28 +115,82 @@ async def create_preference(
             }
             for item in items
         ],
+        "payment_methods": {
+                            "excluded_payment_types": [{"id": "ticket"}, {"id": "atm"}, {"id": "bank_transfer"}],
+         },
+"binary_mode": True,
         "payer": {"email": payer_email},
         "external_reference": str(booking_id),
-        # MP will POST to this URL on every payment status change.
-        "notification_url": f"{settings.backend_url}/webhooks/mercadopago",
-        "back_urls": {
-            "success": (
-                f"{settings.frontend_url}/confirmacion"
-                f"?booking_id={booking_id}"
-                f"&token={generate_confirmation_token(booking_id)}"
-            ),
-            "failure": f"{settings.frontend_url}/bookings/{booking_id}/failure",
-            "pending": f"{settings.frontend_url}/bookings/{booking_id}/pending",
-        },
-        "auto_return": "approved",
+        # MP will POST to this URL on every payment status change. Not sent when
+        # the webhook is turned off, so MP does not call an endpoint that ignores it.
+        **(
+            {"notification_url": f"{settings.backend_url}/webhooks/mercadopago"}
+            if settings.mercadopago_webhook_enabled
+            else {}
+        ),
+        # MP appends ?status=... to whichever URL it returns to; /confirmacion
+        # renders the approved, pending and failure states from that param.
+        "back_urls": {"success": return_url, "failure": return_url, "pending": return_url},
+        **_auto_return(return_url),
     }
+    return await _create_preference(body)
 
+
+async def create_test_preference(amount: int, title: str) -> CreatedPreference:
+    """Create a preference that is not tied to any booking (dev tooling only).
+
+    No notification_url: there is no booking for the webhook to confirm.
+    """
+    return_url = f"{settings.frontend_url}/pago?dev=1"
+    body = {
+        "items": [
+            {
+                "title": title,
+                "quantity": 1,
+                "unit_price": float(amount),
+                "currency_id": "ARS",
+            }
+        ],
+        "external_reference": f"dev-test-{uuid.uuid4()}",
+        "back_urls": {"success": return_url, "failure": return_url, "pending": return_url},
+        **_auto_return(return_url),
+    }
+    return await _create_preference(body)
+
+
+def _auto_return(return_url: str) -> dict:
+    # MP rejects auto_return (400 invalid_auto_return) unless the success URL is
+    # public https. On http://localhost the checkout still works; the buyer just
+    # clicks "volver al sitio" instead of being redirected automatically.
+    return {"auto_return": "approved"} if return_url.startswith("https://") else {}
+
+
+# Only instant methods (cards, account money): seats are held for a few minutes,
+# so a cash voucher or transfer paid later would land on an expired booking.
+# binary_mode makes MP answer approved/rejected on the spot, never pending.
+_INSTANT_PAYMENT_ONLY = {
+    "payment_methods": {
+        "excluded_payment_types": [{"id": "ticket"}, {"id": "atm"}, {"id": "bank_transfer"}],
+    },
+    "binary_mode": True,
+}
+
+
+async def _create_preference(body: dict) -> CreatedPreference:
+    body = {**body, **_INSTANT_PAYMENT_ONLY}
     result = await call_with_retry(
         lambda: asyncio.to_thread(_sdk.preference().create, body, _REQUEST_OPTIONS),
     )
 
     status_code = result.get("status")
     if status_code not in (200, 201):
+        # MP's own reason (e.g. missing/invalid access token, bad back_urls);
+        # the status code alone does not say which.
+        error = result.get("response") or {}
+        logger.error(
+            "mp_preference_rejected status=%s code=%s message=%s",
+            status_code, error.get("code") or error.get("error"), error.get("message"),
+        )
         raise PaymentProcessingError(
             f"Preference creation failed: HTTP {status_code}",
             status_code=status_code or 500,
@@ -139,6 +200,7 @@ async def create_preference(
     return CreatedPreference(
         preference_id=data["id"],
         init_point=data["init_point"],
+        sandbox_init_point=data.get("sandbox_init_point"),
     )
 
 

@@ -400,6 +400,36 @@ async def test_expire_booking_happy_path(db: AsyncSession):
     assert seat_db.reserved_at is None
 
 
+async def test_asiento_de_reserva_expirada_se_puede_volver_a_reservar(db: AsyncSession):
+    trip = await _make_trip(db)
+    seat = await _make_seat(db, trip, "7B")
+    await _add_tranche(db, trip)
+    await db.commit()
+
+    async def _book() -> Booking:
+        booking, _ = await create_booking(
+            db,
+            trip_id=trip.id,
+            seat_ids=[seat.id],
+            passengers_data=[_passenger_data(seat)],
+            origin_country=CountryEnum.AR,
+            destination_country=CountryEnum.PY,
+            contact_email="buyer@example.com",
+        )
+        await db.commit()
+        return booking
+
+    first = await _book()
+    await expire_booking(db, first.id)
+    await db.commit()
+
+    second = await _book()
+
+    assert second.status == BookingStatusEnum.pending_payment
+    result = await db.execute(select(Passenger).where(Passenger.seat_id == seat.id))
+    assert len(result.scalars().all()) == 2
+
+
 async def test_expire_already_expired_booking_is_idempotent(db: AsyncSession):
     # expire_booking has no status guard — calling it again does not raise.
     trip = await _make_trip(db)

@@ -96,7 +96,7 @@ describe("CompraContent — mismatch seat_ids/passengers (LLE-336)", () => {
     });
     createBookingMock.mockResolvedValue({
       status: 201,
-      json: async () => ({ init_point: "https://mp.example.com/pay" }),
+      json: async () => ({ id: "booking-1", confirmation_token: "tok/1" }),
     });
 
     // jsdom no implementa navegación real — evitamos el error de "not implemented".
@@ -116,7 +116,7 @@ describe("CompraContent — mismatch seat_ids/passengers (LLE-336)", () => {
       expect(createBookingMock).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
-      expect(window.location.href).toBe("https://mp.example.com/pay");
+      expect(window.location.href).toBe("/pago?booking_id=booking-1&token=tok%2F1");
     });
   });
 });

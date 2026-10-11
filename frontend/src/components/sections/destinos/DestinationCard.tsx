@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 type DestinationCardProps = {
   image: string;
   category: string;
@@ -55,13 +57,13 @@ export default function DestinationCard({
         {description}
       </p>
       {ctaType === "link" ? (
-        <a
+        <Link
           className="inline-flex items-center gap-2 w-fit text-[#132691] text-sm font-semibold tracking-wide group"
-          href="#"
+          href="/#buscar"
         >
           {ctaText}
           <span className="group-hover:translate-x-1 transition-transform">→</span>
-        </a>
+        </Link>
       ) : (
         <button className="w-fit bg-[#e3000f] text-white px-8 py-3 rounded-lg text-sm font-semibold tracking-wide hover:opacity-90 transition-all">
           {ctaText}
