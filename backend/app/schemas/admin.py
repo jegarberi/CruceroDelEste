@@ -59,6 +59,14 @@ class SeatLayoutRead(BaseModel):
     description: str | None
 
 
+class SeatLayoutCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    # total_cama > 0 matches ck_seat_layouts_total_cama.
+    total_cama: int = Field(gt=0, le=100)
+    total_semi_cama: int = Field(ge=0, le=100)
+    description: str | None = Field(default=None, max_length=500)
+
+
 class StopCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     country: CountryEnum

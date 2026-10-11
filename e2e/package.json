@@ -1,0 +1,15 @@
+{
+  "name": "expreso-rio-parana-e2e",
+  "private": true,
+  "scripts": {
+    "stack:up": "docker compose up -d --build --wait",
+    "stack:down": "docker compose down -v",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@types/node": "^22.0.0"
+  }
+}

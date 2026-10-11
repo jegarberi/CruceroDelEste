@@ -13,7 +13,7 @@ from app.models.booking import Booking, BookingStatusEnum, Passenger
 from app.models.trip import Route, Trip
 from app.deps import trip_load_options
 from app.services.booking import expire_booking
-from app.services.email import send_feedback_email, send_reminder_email
+from app.services.email import send_confirmation_email, send_feedback_email, send_reminder_email
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,13 @@ def register_jobs() -> None:
         send_reminders_job,
         trigger=IntervalTrigger(hours=1),
         id="send_reminders",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        retry_confirmation_emails_job,
+        trigger=IntervalTrigger(hours=1),
+        id="retry_confirmation_emails",
         replace_existing=True,
         misfire_grace_time=3600,
     )
@@ -114,6 +121,57 @@ async def send_reminders_job() -> None:
             except Exception:
                 logger.error(
                     "send_reminders_job failed booking_id=%s",
+                    booking_id,
+                    exc_info=True,
+                )
+                await db.rollback()
+
+
+# A confirmation that still fails after this long is not retried any more
+# (a mistyped address would otherwise be attempted every hour forever).
+_CONFIRMATION_RETRY_WINDOW = timedelta(hours=48)
+# Leaves the inline send (webhook / verify) time to finish before retrying.
+_CONFIRMATION_RETRY_GRACE = timedelta(minutes=5)
+
+
+async def retry_confirmation_emails_job() -> None:
+    now = datetime.now(timezone.utc)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Booking.id).where(
+                Booking.status == BookingStatusEnum.confirmed,
+                Booking.confirmed_at >= now - _CONFIRMATION_RETRY_WINDOW,
+                Booking.confirmed_at <= now - _CONFIRMATION_RETRY_GRACE,
+                Booking.passengers.any(Passenger.confirmation_sent.is_(False)),
+            )
+        )
+        booking_ids = list(result.scalars().all())
+
+    for booking_id in booking_ids:
+        async with AsyncSessionLocal() as db:
+            try:
+                result = await db.execute(
+                    select(Booking)
+                    .where(Booking.id == booking_id)
+                    .options(
+                        selectinload(Booking.passengers).selectinload(Passenger.seat),
+                        selectinload(Booking.trip).options(trip_load_options()),
+                    )
+                )
+                db_booking = result.scalar_one()
+                try:
+                    await send_confirmation_email(db_booking)
+                except Exception:
+                    logger.warning(
+                        "retry_confirmation_emails_job_still_failing booking_id=%s, se reintentará en el próximo ciclo",
+                        booking_id,
+                    )
+                # Persists the passengers that did get it, even on a partial failure.
+                await db.commit()
+            except Exception:
+                logger.error(
+                    "retry_confirmation_emails_job failed booking_id=%s",
                     booking_id,
                     exc_info=True,
                 )

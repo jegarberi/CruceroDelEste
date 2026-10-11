@@ -52,6 +52,19 @@ export async function getSeatLayouts(): Promise<SeatLayoutRead[]> {
   return response.data;
 }
 
+export async function createSeatLayout(data: {
+  name: string;
+  total_cama: number;
+  total_semi_cama: number;
+}): Promise<SeatLayoutRead> {
+  const response = await apiClient.post<SeatLayoutRead>("/admin/seat-layouts", data);
+  return response.data;
+}
+
+export async function deleteSeatLayout(id: string): Promise<void> {
+  await apiClient.delete(`/admin/seat-layouts/${id}`);
+}
+
 export async function getRouteStops(routeId: string): Promise<RouteStopRead[]> {
   const response = await apiClient.get<RouteStopRead[]>(`/admin/routes/${routeId}/stops`);
   return response.data;

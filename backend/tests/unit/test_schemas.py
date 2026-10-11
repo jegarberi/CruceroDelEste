@@ -281,6 +281,9 @@ def test_passenger_field_declarations_stay_in_sync():
         "booking_id",
         # Timestamp generado por el server al insertar la fila.
         "created_at",
+        # Estado interno: lo pone el server cuando el mail de confirmación
+        # salió (app/services/email.py). El comprador no lo decide.
+        "confirmation_sent",
     }
     model_fields = set(Passenger.__table__.columns.keys()) - model_only_fields
 

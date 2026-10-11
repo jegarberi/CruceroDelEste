@@ -2,6 +2,43 @@ import type { StopRead, TripRead, SeatRead, BookingRead } from "@/types/trips"
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL
 
+// El backend exige en todo POST el header X-CSRF-Token igual a una cookie
+// HttpOnly que él mismo emite en GET /csrf-token. El token vive en memoria:
+// nunca en localStorage ni en una cookie legible por JS.
+let csrfToken: Promise<string> | null = null
+
+function getCsrfToken(): Promise<string> {
+  csrfToken ??= fetch(`${BASE_URL}/csrf-token`, { credentials: "include" })
+    .then((response) => {
+      if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
+      return response.json()
+    })
+    .then((data: { csrf_token: string }) => data.csrf_token)
+    .catch((err) => {
+      csrfToken = null
+      throw err
+    })
+  return csrfToken
+}
+
+async function postJson(path: string, body: unknown): Promise<Response> {
+  const send = async () =>
+    fetch(`${BASE_URL}${path}`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": await getCsrfToken() },
+      body: JSON.stringify(body),
+    })
+
+  const response = await send()
+  if (response.status !== 403) return response
+  // La cookie pudo haberse borrado desde que pedimos el token: renovar y reintentar una vez.
+  const detail = await response.clone().json().then((data) => data?.detail, () => null)
+  if (detail !== "csrf_failed") return response
+  csrfToken = null
+  return send()
+}
+
 let stopsCache: StopRead[] | null = null
 let stopsCachePromise: Promise<StopRead[]> | null = null
 
@@ -96,17 +133,41 @@ export async function createBooking(payload: {
     phone: string | null
   }[]
 }): Promise<Response> {
-  return fetch(`${BASE_URL}/bookings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  })
+  return postJson("/bookings", payload)
 }
 
 export async function refundRequest(bookingId: string, email: string): Promise<Response> {
-  return fetch(`${BASE_URL}/bookings/${bookingId}/refund-request`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
-  })
+  return postJson(`/bookings/${bookingId}/refund-request`, { email })
+}
+
+export async function createBookingPayment(
+  bookingId: string,
+  token: string,
+  method: string
+): Promise<Response> {
+  return postJson(`/bookings/${bookingId}/payments?token=${encodeURIComponent(token)}`, { method })
+}
+
+// Solo existe en el backend cuando ENVIRONMENT != "production" (404 en producción).
+export async function createDevTestPayment(amount: number, title: string): Promise<Response> {
+  return postJson("/dev/payments", { amount, title })
+}
+
+// Le pide al backend que consulte ese pago en MercadoPago y confirme la reserva
+// si está aprobado, sin esperar el webhook. Devuelve la reserva (BookingRead).
+export async function verifyBookingPayment(
+  bookingId: string,
+  token: string,
+  paymentId: string
+): Promise<Response> {
+  return postJson(
+    `/bookings/${bookingId}/payments/${encodeURIComponent(paymentId)}/verify?token=${encodeURIComponent(token)}`,
+    {}
+  )
+}
+
+// El comprador desiste de una reserva sin pagar: sus asientos vuelven a estar
+// a la venta ya, sin esperar a que venza. Devuelve la reserva (BookingRead).
+export async function releaseBooking(bookingId: string, token: string): Promise<Response> {
+  return postJson(`/bookings/${bookingId}/release?token=${encodeURIComponent(token)}`, {})
 }

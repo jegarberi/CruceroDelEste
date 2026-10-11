@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from httpx import AsyncClient
 from passlib.context import CryptContext
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.booking import AdminUser, Booking, BookingStatusEnum, Passenger
@@ -21,6 +22,7 @@ from app.models.trip import (
     Stop,
     Trip,
     TripStatusEnum,
+    RouteStop,
 )
 from app.routers.admin_catalog import compute_coverage
 
@@ -543,6 +545,121 @@ async def test_delete_route_happy_path_returns_204(client: AsyncClient, db: Asyn
 
     assert resp.status_code == 204
     assert resp.content == b""
+
+
+# ---------------------------------------------------------------------------
+# POST / DELETE /admin/seat-layouts
+# ---------------------------------------------------------------------------
+
+async def test_create_seat_layout_numbers_seats_semi_cama_first(client: AsyncClient, db: AsyncSession):
+    await _make_admin(db)
+    await db.commit()
+    token = await _login(client)
+
+    resp = await client.post(
+        "/admin/seat-layouts",
+        json={"name": "Micro chico", "total_cama": 2, "total_semi_cama": 3},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 201
+    result = await db.execute(
+        select(SeatLayoutSeat.seat_number, SeatLayoutSeat.seat_type)
+        .where(SeatLayoutSeat.seat_layout_id == resp.json()["id"])
+        .order_by(SeatLayoutSeat.display_order)
+    )
+    assert [(n, t.value) for n, t in result.all()] == [
+        ("1", "semi_cama"), ("2", "semi_cama"), ("3", "semi_cama"), ("4", "cama"), ("5", "cama"),
+    ]
+
+
+async def test_create_seat_layout_duplicate_name_returns_409(client: AsyncClient, db: AsyncSession):
+    await _make_admin(db)
+    await _make_layout(db, name="Repetido")
+    await db.commit()
+    token = await _login(client)
+
+    resp = await client.post(
+        "/admin/seat-layouts",
+        json={"name": "Repetido", "total_cama": 1, "total_semi_cama": 0},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "seat_layout_already_exists"
+
+
+async def test_delete_seat_layout_unused_returns_204_and_removes_its_seats(client: AsyncClient, db: AsyncSession):
+    await _make_admin(db)
+    layout = await _make_layout(db)
+    await db.commit()
+    token = await _login(client)
+
+    resp = await client.delete(f"/admin/seat-layouts/{layout.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    remaining = await db.execute(select(SeatLayoutSeat.id).where(SeatLayoutSeat.seat_layout_id == layout.id))
+    assert remaining.all() == []
+
+
+async def test_delete_seat_layout_used_by_a_trip_returns_409(client: AsyncClient, db: AsyncSession):
+    await _make_admin(db)
+    origin, destination = await _make_stops(db)
+    route = await _make_route(db, origin, destination)
+    layout = await _make_layout(db)
+    await _make_trip(db, route, layout)
+    await db.commit()
+    token = await _login(client)
+
+    resp = await client.delete(f"/admin/seat-layouts/{layout.id}", headers=_auth(token))
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "seat_layout_in_use"
+    assert (await db.get(SeatLayout, layout.id)) is not None
+
+
+async def test_delete_seat_layout_ignores_cancelled_and_past_trips(client: AsyncClient, db: AsyncSession):
+    await _make_admin(db)
+    origin, destination = await _make_stops(db)
+    route = await _make_route(db, origin, destination)
+    layout = await _make_layout(db)
+    cancelled = await _make_trip(db, route, layout)
+    cancelled.status = TripStatusEnum.cancelled
+    past = await _make_trip(db, route, layout)
+    past.departure_at = datetime.now(timezone.utc) - timedelta(days=2)
+    past.arrival_at = datetime.now(timezone.utc) - timedelta(days=1)
+    await db.commit()
+    token = await _login(client)
+
+    resp = await client.delete(f"/admin/seat-layouts/{layout.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    # The trips survive, detached from the deleted layout.
+    for trip in (cancelled, past):
+        await db.refresh(trip)
+        assert trip.seat_layout_id is None
+
+
+async def test_reorder_route_stops_swaps_positions(client: AsyncClient, db: AsyncSession):
+    # Swapping two stops used to hit uq_route_stops_route_order mid-flush and
+    # always answer 409.
+    await _make_admin(db)
+    origin, destination = await _make_stops(db)
+    route = await _make_route(db, origin, destination)
+    db.add(RouteStop(route_id=route.id, stop_id=origin.id, order=0))
+    db.add(RouteStop(route_id=route.id, stop_id=destination.id, order=1))
+    await db.commit()
+    token = await _login(client)
+
+    resp = await client.put(
+        f"/admin/routes/{route.id}/stops/reorder",
+        json={"stop_ids": [str(destination.id), str(origin.id)]},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    assert [s["name"] for s in resp.json()] == ["Asunción", "Retiro"]
+    assert [s["order"] for s in resp.json()] == [0, 1]
 
 
 async def test_delete_route_with_trips_returns_409(client: AsyncClient, db: AsyncSession):

@@ -39,28 +39,28 @@ export function NosotrosV2() {
           className="nosotros-grid"
         >
           <NosotrosCardV2
-            imageSrc="/assets/nosotros/empresa.jpg"
+            imageSrc="/assets/nosotros/empresa.webp"
             imageAlt="Nuestra empresa"
             title="Nuestra empresa"
             description="Más de 60 años conectando Argentina y Paraguay con seguridad, experiencia y servicio de calidad."
             href="/nosotros"
           />
           <NosotrosCardV2
-            imageSrc="/assets/nosotros/destinos.jpg"
+            imageSrc="/assets/nosotros/destinos.webp"
             imageAlt="Nuestros destinos"
             title="Nuestros destinos"
             description="Una extensa red de rutas que une ciudades y personas en Argentina y Paraguay con frecuencias diarias."
             href="/destinos"
           />
           <NosotrosCardV2
-            imageSrc="/assets/nosotros/equipo.jpg"
+            imageSrc="/assets/nosotros/equipo.webp"
             imageAlt="Nuestro equipo"
             title="Nuestro equipo"
             description="Profesionales comprometidos que trabajan cada día para brindar un viaje seguro, cómodo y puntual."
             href="/nosotros#contacto"
           />
           <NosotrosCardV2
-            imageSrc="/assets/nosotros/compromiso.jpg"
+            imageSrc="/assets/nosotros/compromiso.webp"
             imageAlt="Nuestro compromiso"
             title="Nuestro compromiso"
             href="/nosotros"

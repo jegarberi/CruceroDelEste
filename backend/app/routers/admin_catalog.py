@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -32,6 +32,7 @@ from app.schemas.admin import (
     RouteStopAdd,
     RouteStopRead,
     RouteStopReorder,
+    SeatLayoutCreate,
     SeatLayoutRead,
     StopCreate,
     StopUpdate,
@@ -90,6 +91,71 @@ async def list_seat_layouts(
 ) -> list[SeatLayoutRead]:
     result = await db.execute(select(SeatLayout).order_by(SeatLayout.name.asc()))
     return list(result.scalars().all())
+
+
+@router.post("/seat-layouts", response_model=SeatLayoutRead, status_code=status.HTTP_201_CREATED)
+async def create_seat_layout(
+    body: SeatLayoutCreate,
+    _admin: AdminUser = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> SeatLayoutRead:
+    existing = await db.execute(select(SeatLayout).where(SeatLayout.name == body.name))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="seat_layout_already_exists",
+        )
+
+    layout = SeatLayout(**body.model_dump())
+    # Seats are numbered automatically: Semi Cama first (1..N), then Cama.
+    seat_types = [SeatTypeEnum.semi_cama] * body.total_semi_cama + [SeatTypeEnum.cama] * body.total_cama
+    layout.seats = [
+        SeatLayoutSeat(seat_number=str(number), seat_type=seat_type, display_order=number)
+        for number, seat_type in enumerate(seat_types, start=1)
+    ]
+    db.add(layout)
+    await db.commit()
+    await db.refresh(layout)
+    return layout
+
+
+@router.delete("/seat-layouts/{layout_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_seat_layout(
+    layout_id: UUID,
+    _admin: AdminUser = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    result = await db.execute(
+        select(SeatLayout).options(selectinload(SeatLayout.seats)).where(SeatLayout.id == layout_id)
+    )
+    layout = result.scalar_one_or_none()
+    if layout is None:
+        raise NotFoundError()
+
+    # Only upcoming trips keep a layout alive. Nothing marks a trip completed
+    # automatically, so "already ran" is judged by its departure time.
+    upcoming = await db.execute(
+        select(Trip.id)
+        .where(
+            Trip.seat_layout_id == layout_id,
+            Trip.status == TripStatusEnum.scheduled,
+            Trip.departure_at > datetime.now(timezone.utc),
+        )
+        .limit(1)
+    )
+    if upcoming.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="seat_layout_in_use",
+        )
+
+    # Cancelled and past trips keep their seats and bookings; they just stop
+    # pointing at the layout (trips.seat_layout_id is nullable).
+    await db.execute(
+        update(Trip).where(Trip.seat_layout_id == layout_id).values(seat_layout_id=None)
+    )
+    await db.delete(layout)
+    await db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -392,10 +458,14 @@ async def reorder_route_stops(
         )
 
     by_stop_id = {rs.stop_id: rs for rs in route_stops}
-    for position, stop_id in enumerate(body.stop_ids):
-        by_stop_id[stop_id].order = position
-
     try:
+        # Two passes: the (parent, order) unique constraint is checked row by
+        # row, so swapping two positions directly collides on the first UPDATE.
+        for position, stop_id in enumerate(body.stop_ids):
+            by_stop_id[stop_id].order = -(position + 1)
+        await db.flush()
+        for position, stop_id in enumerate(body.stop_ids):
+            by_stop_id[stop_id].order = position
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -869,10 +939,14 @@ async def reorder_trip_stop_overrides(
         )
 
     by_stop_id = {o.stop_id: o for o in overrides}
-    for position, stop_id in enumerate(body.stop_ids):
-        by_stop_id[stop_id].order = position
-
     try:
+        # Two passes: the (parent, order) unique constraint is checked row by
+        # row, so swapping two positions directly collides on the first UPDATE.
+        for position, stop_id in enumerate(body.stop_ids):
+            by_stop_id[stop_id].order = -(position + 1)
+        await db.flush()
+        for position, stop_id in enumerate(body.stop_ids):
+            by_stop_id[stop_id].order = position
         await db.commit()
     except IntegrityError:
         await db.rollback()

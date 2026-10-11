@@ -30,8 +30,6 @@ interface DrawerLink {
 
 const NAV_LINKS: DrawerLink[] = [
   { label: "Destinos", href: "/destinos", icon: "map" },
-  { label: "Estado del viaje", href: "/estado-viaje", icon: "directions_bus" },
-  { label: "Mis reservas", href: "/mis-reservas", icon: "confirmation_number" },
   { label: "Preguntas frecuentes", href: "/preguntas-frecuentes", icon: "help" },
 ];
 
@@ -130,7 +128,7 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
             borderBottom: "1px solid var(--color-border)",
           }}
         >
-          <Image src="/assets/logo-rioparana.png" alt="Expreso Río Paraná" height={36} width={144} />
+          <Image src="/assets/logo-rioparana.webp" alt="Expreso Río Paraná" height={36} width={144} />
           <button onClick={onClose}>
             <span className="material-symbols-outlined" style={{ color: "var(--color-navy)" }}>
               close

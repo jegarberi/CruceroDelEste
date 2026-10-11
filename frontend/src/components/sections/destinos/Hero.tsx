@@ -3,7 +3,7 @@ export default function Hero() {
     <section className="relative w-full overflow-hidden h-[716px] md:h-[716px]" style={{ minHeight: "100svh" }}>
       <div
         className="absolute inset-0 bg-cover bg-center"
-        style={{ backgroundImage: "url('/fondo-destinos.png')" }}
+        style={{ backgroundImage: "url('/fondo-destinos.webp')" }}
       />
       <div className="absolute inset-0 bg-gradient-to-b md:bg-gradient-to-r from-[#132691]/90 via-[#132691]/60 to-[#132691]/30 md:to-transparent" />
       <div className="relative h-full max-w-[1280px] mx-auto px-6 md:px-16 flex flex-col justify-end md:justify-center items-start text-white pb-12 md:pb-0">

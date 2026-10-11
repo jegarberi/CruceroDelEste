@@ -1,7 +1,7 @@
 """Integration tests for app/routers/trips.py."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -228,6 +228,23 @@ async def test_list_trips_filter_by_destination(client: AsyncClient, db: AsyncSe
     assert data[0]["route"]["destination_stop"]["name"] == "Asunción"
 
 
+async def test_list_trips_departure_date_is_argentina_local_date(client: AsyncClient, db: AsyncSession):
+    # Sale 21:30 en Buenos Aires = 00:30 UTC del día siguiente. Se busca por la
+    # fecha que ve el comprador, no por la fecha UTC.
+    route = await _make_route(db)
+    local_day = (datetime.now(timezone.utc) + timedelta(days=3)).date()
+    trip = await _make_trip(db, route)
+    trip.departure_at = datetime.combine(local_day + timedelta(days=1), time(0, 30), tzinfo=timezone.utc)
+    trip.arrival_at = trip.departure_at + timedelta(hours=4)
+    await _add_tranche(db, trip, SeatTypeEnum.cama)
+
+    found = await client.get("/trips", params={"departure_date": str(local_day)})
+    next_day = await client.get("/trips", params={"departure_date": str(local_day + timedelta(days=1))})
+
+    assert [t["id"] for t in found.json()] == [str(trip.id)]
+    assert next_day.json() == []
+
+
 async def test_list_trips_filter_by_departure_date(client: AsyncClient, db: AsyncSession):
     route = await _make_route(db)
     now = datetime.now(timezone.utc)
@@ -237,7 +254,8 @@ async def test_list_trips_filter_by_departure_date(client: AsyncClient, db: Asyn
     await _add_tranche(db, trip_tomorrow, SeatTypeEnum.cama)
     await _add_tranche(db, trip_later, SeatTypeEnum.cama)
 
-    tomorrow = (now + timedelta(days=1)).date()
+    # departure_date es fecha local de Argentina (UTC-3), no UTC.
+    tomorrow = (now + timedelta(days=1)).astimezone(timezone(timedelta(hours=-3))).date()
     resp = await client.get("/trips", params={"departure_date": str(tomorrow)})
     assert resp.status_code == 200
     data = resp.json()
@@ -326,7 +344,7 @@ async def test_list_trips_explicit_departure_date_ignores_two_week_window(
     trip_far = await _make_trip(db, route, departure_offset_days=60)
     await _add_tranche(db, trip_far, SeatTypeEnum.cama)
 
-    far_date = (datetime.now(timezone.utc) + timedelta(days=60)).date()
+    far_date = (datetime.now(timezone.utc) + timedelta(days=60)).astimezone(timezone(timedelta(hours=-3))).date()
     resp = await client.get("/trips", params={"departure_date": str(far_date)})
     assert resp.status_code == 200
     data = resp.json()

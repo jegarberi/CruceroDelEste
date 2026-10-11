@@ -120,7 +120,12 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 
     with patch("app.main.scheduler"), patch("app.main.register_jobs"):
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            # Every test request carries a valid CSRF pair, like a real browser
+            # session would. CSRF behaviour itself is covered in tests/unit/test_csrf.py.
+            headers={"X-CSRF-Token": "test-csrf-token"},
+            cookies={"csrf": "test-csrf-token"},
         ) as ac:
             yield ac
 

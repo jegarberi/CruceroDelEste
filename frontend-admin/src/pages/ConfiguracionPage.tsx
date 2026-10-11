@@ -30,6 +30,7 @@ import {
 import { getStops, createStop, deleteStop, updateStop } from "@/api/stops";
 import { getRoutes, createRoute, deleteRoute, getRouteStops, addRouteStop, removeRouteStop, reorderRouteStops } from "@/api/routes";
 import type { CountryEnum, StopRead, RouteRead, RouteStopRead } from "@/types/trips";
+import SeatLayoutsSection from "@/components/SeatLayoutsSection";
 
 const COUNTRY_LABEL: Record<CountryEnum, string> = {
   AR: "Argentina",
@@ -333,6 +334,7 @@ export default function ConfiguracionPage() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        aria-label="Editar parada"
                         className="text-neutral-600"
                         onClick={() => {
                           setStopToEdit(stop);
@@ -346,6 +348,7 @@ export default function ConfiguracionPage() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        aria-label="Eliminar parada"
                         className="text-[#E87B7B]"
                         onClick={() => setStopToDelete(stop)}
                       >
@@ -421,6 +424,7 @@ export default function ConfiguracionPage() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        aria-label="Gestionar paradas de la ruta"
                         className="text-neutral-600"
                         onClick={() => setManageStopsRoute(route)}
                       >
@@ -429,6 +433,7 @@ export default function ConfiguracionPage() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        aria-label="Eliminar ruta"
                         className="text-[#E87B7B]"
                         onClick={() => setRouteToDelete(route)}
                       >
@@ -441,6 +446,8 @@ export default function ConfiguracionPage() {
           </Table>
         </div>
       </div>
+
+      <SeatLayoutsSection />
 
       <Dialog
         open={stopToDelete !== null}
@@ -505,7 +512,9 @@ export default function ConfiguracionPage() {
                 onValueChange={(value) => setCountry(value as CountryEnum)}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Seleccionar país" />
+                  <SelectValue>
+                    {country === "AR" ? "Argentina" : country === "PY" ? "Paraguay" : "Seleccionar país"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="AR">Argentina</SelectItem>
@@ -583,7 +592,9 @@ export default function ConfiguracionPage() {
                 onValueChange={(value) => setEditCountry(value as CountryEnum)}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Seleccionar país" />
+                  <SelectValue>
+                    {editCountry === "AR" ? "Argentina" : editCountry === "PY" ? "Paraguay" : "Seleccionar país"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="AR">Argentina</SelectItem>
@@ -772,6 +783,7 @@ export default function ConfiguracionPage() {
                     <Button
                       variant="ghost"
                       size="icon-sm"
+                      aria-label="Subir parada"
                       disabled={idx === 0}
                       onClick={() => handleMoveStop(stop.stop_id, "up")}
                     >
@@ -780,6 +792,7 @@ export default function ConfiguracionPage() {
                     <Button
                       variant="ghost"
                       size="icon-sm"
+                      aria-label="Bajar parada"
                       disabled={idx === arr.length - 1}
                       onClick={() => handleMoveStop(stop.stop_id, "down")}
                     >
@@ -788,6 +801,7 @@ export default function ConfiguracionPage() {
                     <Button
                       variant="ghost"
                       size="icon-sm"
+                      aria-label="Quitar parada de la ruta"
                       className="text-[#E87B7B]"
                       onClick={() => handleRemoveStop(stop.stop_id)}
                     >

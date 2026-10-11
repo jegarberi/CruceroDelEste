@@ -68,7 +68,7 @@ export function Hero() {
     <section style={{ width: "100%", minHeight: mounted && isMobile ? "100svh" : "80vh", position: "relative" }}>
       {/* Background image — siempre */}
       <Image
-        src={mounted && isMobile ? "/secciones/Hero-mobile.png" : "/secciones/Hero.png"}
+        src={mounted && isMobile ? "/secciones/Hero-mobile.webp" : "/secciones/Hero.webp"}
         alt=""
         fill
         priority
