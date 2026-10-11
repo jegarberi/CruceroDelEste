@@ -168,6 +168,8 @@ async def mercadopago_webhook(
                 booking_id,
                 exc,
             )
+        # Persist passengers.confirmation_sent, also after a partial failure.
+        await db.commit()
 
         return JSONResponse(_OK)
 

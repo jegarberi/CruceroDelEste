@@ -14,7 +14,11 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-RUN adduser --disabled-password --gecos "" appuser
+# next/image guarda las imágenes optimizadas en .next/cache: tiene que poder
+# escribir ahí el usuario sin privilegios, o las re-optimiza en cada pedido.
+RUN adduser --disabled-password --gecos "" appuser \
+    && mkdir -p .next/cache \
+    && chown appuser .next/cache
 USER appuser
 
 EXPOSE 3000

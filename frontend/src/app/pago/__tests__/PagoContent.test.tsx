@@ -13,11 +13,13 @@ vi.mock("next/navigation", () => ({
 const getBookingMock = vi.fn();
 const createBookingPaymentMock = vi.fn();
 const createDevTestPaymentMock = vi.fn();
+const releaseBookingMock = vi.fn();
 
 vi.mock("@/api", () => ({
   getBooking: (...args: unknown[]) => getBookingMock(...args),
   createBookingPayment: (...args: unknown[]) => createBookingPaymentMock(...args),
   createDevTestPayment: (...args: unknown[]) => createDevTestPaymentMock(...args),
+  releaseBooking: (...args: unknown[]) => releaseBookingMock(...args),
 }));
 
 function booking(overrides: Partial<BookingRead> = {}): BookingRead {
@@ -77,6 +79,19 @@ describe("PagoContent", () => {
 
     await waitFor(() => expect(window.location.href).toBe("https://mp.example.com/pay"));
     expect(createBookingPaymentMock).toHaveBeenCalledWith("booking-1", "tok", "mercadopago");
+  });
+
+  it("volver libera la reserva y lleva al mapa de asientos del mismo viaje", async () => {
+    getBookingMock.mockResolvedValue(booking());
+    releaseBookingMock.mockResolvedValue({ status: 200 });
+    Object.defineProperty(window, "location", { configurable: true, value: { href: "" } });
+
+    render(<PagoContent />);
+    await userEvent.click(await screen.findByRole("button", { name: /Volver y elegir otros asientos/ }));
+
+    await waitFor(() => expect(window.location.href).toBe("/asientos/trip-1?passengers=0"));
+    expect(releaseBookingMock).toHaveBeenCalledWith("booking-1", "tok");
+    expect(createBookingPaymentMock).not.toHaveBeenCalled();
   });
 
   it("no ofrece pagar una reserva vencida", async () => {

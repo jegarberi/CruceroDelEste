@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { createBookingPayment, createDevTestPayment, getBooking } from "@/api";
+import { createBookingPayment, createDevTestPayment, getBooking, releaseBooking } from "@/api";
 import { BlueButton } from "@/components/core/BlueButton";
 import type { BookingRead } from "@/types/trips";
 
@@ -55,6 +55,20 @@ export function PagoContent() {
   const [method, setMethod] = useState<PaymentMethodId>(PAYMENT_METHODS[0].id);
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState("");
+  const [goingBack, setGoingBack] = useState(false);
+
+  // La reserva ya existe y retiene los asientos: volver atrás la libera y
+  // lleva al mapa. Volver al formulario de datos haría chocar la nueva reserva
+  // con esta misma.
+  async function handleBack(booking: BookingRead) {
+    setGoingBack(true);
+    try {
+      await releaseBooking(bookingId, token);
+    } catch (error) {
+      console.error("[PagoContent] release error:", error);
+    }
+    window.location.href = `/asientos/${booking.trip.id}?passengers=${booking.passengers.length}`;
+  }
 
   useEffect(() => {
     if (!bookingId || !token) return;
@@ -192,9 +206,17 @@ export function PagoContent() {
                     {payError}
                   </p>
                 )}
-                <BlueButton variant="blue" onClick={handlePay} disabled={paying} arrow>
+                <BlueButton variant="blue" onClick={handlePay} disabled={paying || goingBack} arrow>
                   {paying ? "Redirigiendo…" : "Continuar al pago"}
                 </BlueButton>
+                <button
+                  type="button"
+                  onClick={() => handleBack(load.booking)}
+                  disabled={paying || goingBack}
+                  className="self-start bg-transparent border-none p-0 cursor-pointer text-[var(--color-primary)] font-semibold text-sm font-[family-name:var(--font-body)]"
+                >
+                  {goingBack ? "Liberando asientos…" : "← Volver y elegir otros asientos"}
+                </button>
               </div>
             ) : (
               <div className={card} role="alert">

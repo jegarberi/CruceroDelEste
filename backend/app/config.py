@@ -1,3 +1,4 @@
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import model_validator
@@ -23,8 +24,16 @@ class Settings(BaseSettings):
     # confirmation page triggers (POST /bookings/{id}/payments/{pid}/verify).
     mercadopago_webhook_enabled: bool = True
 
-    # Email
-    resend_api_key: str
+    # Email. With SMTP_HOST set, mail goes through that server; otherwise
+    # through Resend (RESEND_API_KEY).
+    resend_api_key: str = ""
+    email_from: str = "no-reply@expresorioparana.com"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    # starttls (usual on 587) | ssl (usual on 465) | none (plain, e.g. a local relay on 25)
+    smtp_security: Literal["starttls", "ssl", "none"] = "starttls"
 
     # App
     # backend_url: public base URL of this API, sent to MercadoPago as notification_url.

@@ -111,6 +111,9 @@ class Passenger(Base):
     email = Column(String(255), nullable=False)
     phone = Column(String(30), nullable=True)
     luggage_count = Column(Integer, nullable=False, default=0, server_default="0")
+    # Set once the purchase-confirmation email went out to this passenger;
+    # retry_confirmation_emails_job re-sends to the ones still false.
+    confirmation_sent = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=sa.text("now()"))
 
     __table_args__ = (

@@ -434,3 +434,5 @@ async def _send_confirmation_email(db: AsyncSession, booking_id: UUID) -> None:
         await send_confirmation_email(result.scalar_one())
     except Exception as exc:  # the booking is confirmed either way
         logger.warning("verify_confirmation_email_failed booking_id=%s error=%s", booking_id, exc)
+    # Persist passengers.confirmation_sent, also after a partial failure.
+    await db.commit()

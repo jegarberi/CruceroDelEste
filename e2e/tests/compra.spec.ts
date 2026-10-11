@@ -201,6 +201,33 @@ test.describe("Compra — asientos, datos del pasajero y pago", () => {
     expect(seatStatus(trip.id, "18")).toBe("reserved");
   });
 
+  test("volver desde los datos del pasajero regresa al mapa de asientos", async ({ page, api }) => {
+    const trip = await api.createTrip();
+    await page.goto(seatsUrl(trip));
+    await pickSeats(page, ["22"]);
+    await page.getByRole("button", { name: "← Volver" }).click();
+    await expect(page).toHaveURL(new RegExp(`/asientos/${trip.id}`));
+    await expect(page.getByRole("heading", { name: "Seleccioná tus asientos" })).toBeVisible();
+    expect(seatStatus(trip.id, "22")).toBe("available");
+  });
+
+  test("volver desde el pago libera la reserva y regresa al mapa con los asientos disponibles", async ({ page, api }) => {
+    const trip = await api.createTrip();
+    await page.goto(seatsUrl(trip, 2));
+    await pickSeats(page, ["23", "24"]);
+    await fillPassenger(page, 0);
+    await fillPassenger(page, 1, { dni: "30111888", email: "dos.e2e@example.com" });
+    await page.getByRole("button", { name: "Continuar al pago" }).click();
+    await page.waitForURL(/\/pago\?booking_id=/);
+    const booking = bookingFromUrl(page);
+
+    await page.getByRole("button", { name: /Volver y elegir otros asientos/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/asientos/${trip.id}\\?passengers=2`));
+    await expect(seat(page, "23")).toBeEnabled();
+    await expect(seat(page, "24")).toBeEnabled();
+    expect(bookingStatus(booking.id)).toBe("expired");
+  });
+
   test("/pago sin datos, con token inválido y con reserva ya pagada", async ({ page, api }) => {
     await page.goto(`${WEB}/pago`);
     await expect(page.getByText("No encontramos una reserva para pagar.")).toBeVisible();
