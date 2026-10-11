@@ -251,6 +251,13 @@ async def create_refund(mp_payment_id: str) -> None:
 
     status_code = result.get("status")
     if status_code not in (200, 201):
+        # MP's own reason (e.g. "Unauthorized use of live credentials"); the
+        # status code alone does not say which.
+        error = result.get("response") or {}
+        logger.error(
+            "mp_refund_rejected payment_id=%s status=%s code=%s message=%s",
+            mp_payment_id, status_code, error.get("code") or error.get("error"), error.get("message"),
+        )
         raise PaymentProcessingError(
             f"Refund creation failed: payment_id={mp_payment_id}, HTTP {status_code}",
             status_code=status_code or 500,
