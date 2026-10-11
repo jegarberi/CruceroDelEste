@@ -245,7 +245,8 @@ async def create_refund(mp_payment_id: str) -> None:
         custom_headers={"X-Idempotency-Key": idempotency_key},
     )
     result = await call_with_retry(
-        lambda: asyncio.to_thread(_sdk.payment().refunds, mp_payment_id, {}, request_options),
+        # No refund_object = full refund (see mercadopago.resources.refund.Refund.create).
+        lambda: asyncio.to_thread(_sdk.refund().create, mp_payment_id, None, request_options),
     )
 
     status_code = result.get("status")

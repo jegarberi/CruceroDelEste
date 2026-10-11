@@ -336,7 +336,7 @@ async def test_refund_request_mp_failure_returns_502_booking_stays_confirmed(
 ):
     booking, _ = await _make_confirmed_booking(db)
 
-    mock_mp_sdk.payment.return_value.refunds.return_value = {
+    mock_mp_sdk.refund.return_value.create.return_value = {
         "status": 500,
         "response": {},
     }
