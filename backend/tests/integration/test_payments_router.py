@@ -137,6 +137,20 @@ def _approved_payment_response(external_reference: str, payment_id: int = 123456
 # Mandatory case 1 — invalid signature
 # ---------------------------------------------------------------------------
 
+async def test_webhook_disabled_ignores_even_a_valid_notification(
+    client: AsyncClient, mock_mp_sdk, monkeypatch
+):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "mercadopago_webhook_enabled", False)
+
+    resp = await client.post("/webhooks/mercadopago?data.id=999&type=payment", json={"data": {"id": "999"}})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ignored", "reason": "webhook_disabled"}
+    mock_mp_sdk.payment.return_value.get.assert_not_called()
+
+
 async def test_webhook_invalid_signature_returns_ignored(client: AsyncClient):
     resp = await _post_webhook(
         client,

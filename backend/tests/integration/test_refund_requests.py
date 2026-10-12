@@ -331,12 +331,12 @@ async def test_refund_request_wrong_email_returns_422(
     assert resp.json()["detail"] == "email_not_found"
 
 
-async def test_refund_request_mp_failure_returns_502_booking_stays_confirmed(
+async def test_refund_request_mp_failure_returns_424_booking_stays_confirmed(
     client: AsyncClient, db: AsyncSession, mock_mp_sdk
 ):
     booking, _ = await _make_confirmed_booking(db)
 
-    mock_mp_sdk.payment.return_value.refunds.return_value = {
+    mock_mp_sdk.refund.return_value.create.return_value = {
         "status": 500,
         "response": {},
     }
@@ -346,7 +346,7 @@ async def test_refund_request_mp_failure_returns_502_booking_stays_confirmed(
         json={"email": "ana@example.com"},
     )
 
-    assert resp.status_code == 502
+    assert resp.status_code == 424
     assert resp.json()["detail"] == "payment_gateway_error"
 
     # Booking must remain confirmed (MP call failed, nothing committed).

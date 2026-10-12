@@ -223,7 +223,7 @@ export function CompraContent({ tripId }: CompraContentProps) {
 
       if (res.status === 201) {
         const data = await res.json();
-        window.location.href = data.init_point;
+        window.location.href = `/pago?booking_id=${data.id}&token=${encodeURIComponent(data.confirmation_token)}`;
         return;
       }
 
@@ -562,6 +562,24 @@ export function CompraContent({ tripId }: CompraContentProps) {
           </div>
         )}
 
+        <button
+          type="button"
+          onClick={() => window.history.back()}
+          disabled={submitting}
+          style={{
+            alignSelf: "flex-start",
+            background: "transparent",
+            border: "none",
+            color: "var(--color-primary)",
+            fontFamily: "var(--font-body)",
+            fontWeight: 600,
+            fontSize: "14px",
+            padding: 0,
+            cursor: "pointer",
+          }}
+        >
+          ← Volver
+        </button>
         <BlueButton
           variant="blue"
           onClick={handleContinuar}

@@ -13,7 +13,7 @@ const ICON_SIZE = 28
 
 const BENEFICIOS = [
   {
-    imageSrc: "/assets/beneficios/seguridad.jpg",
+    imageSrc: "/assets/beneficios/seguridad.webp",
     imageAlt: "Seguridad ante todo",
     icon: <ShieldCheck size={ICON_SIZE} />,
     title: "Seguridad ante todo",
@@ -21,7 +21,7 @@ const BENEFICIOS = [
       "Unidades modernas, mantenimiento constante y protocolos que garantizan tu tranquilidad en cada viaje.",
   },
   {
-    imageSrc: "/assets/beneficios/confort.jpg",
+    imageSrc: "/assets/beneficios/confort.webp",
     imageAlt: "Confort que se siente",
     icon: <Armchair size={ICON_SIZE} />,
     title: "Confort que se siente",
@@ -29,7 +29,7 @@ const BENEFICIOS = [
       "Asientos amplios, climatización, baño a bordo y servicios pensados para tu bienestar.",
   },
   {
-    imageSrc: "/assets/beneficios/experiencia.jpg",
+    imageSrc: "/assets/beneficios/experiencia.webp",
     imageAlt: "Experiencias que conectan",
     icon: <CirclePlay size={ICON_SIZE} />,
     title: "Experiencias que conectan",
@@ -37,7 +37,7 @@ const BENEFICIOS = [
       "Más que llegar, se trata del viaje. Disfrutá cada momento con entretenimiento y atención de calidad.",
   },
   {
-    imageSrc: "/assets/beneficios/compromiso.jpg",
+    imageSrc: "/assets/beneficios/compromiso.webp",
     imageAlt: "Compromiso que nos mueve",
     icon: <UsersRound size={ICON_SIZE} />,
     title: "Compromiso que nos mueve",
@@ -45,7 +45,7 @@ const BENEFICIOS = [
       "Un equipo apasionado que trabaja cada día para superar tus expectativas y acompañarte siempre.",
   },
   {
-    imageSrc: "/assets/beneficios/puntualidad.jpg",
+    imageSrc: "/assets/beneficios/puntualidad.webp",
     imageAlt: "Puntualidad que respetamos",
     icon: <Clock size={ICON_SIZE} />,
     title: "Puntualidad que respetamos",
@@ -53,7 +53,7 @@ const BENEFICIOS = [
       "Salidas y llegadas a tiempo, porque sabemos que tu tiempo es lo más valioso.",
   },
   {
-    imageSrc: "/assets/beneficios/rutas.jpg",
+    imageSrc: "/assets/beneficios/rutas.webp",
     imageAlt: "Rutas que nos unen",
     icon: <MapPin size={ICON_SIZE} />,
     title: "Rutas que nos unen",

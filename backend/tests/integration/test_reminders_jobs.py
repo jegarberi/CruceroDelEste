@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import tasks.reminders as reminders
@@ -250,6 +251,74 @@ async def _seed_confirmed_booking(
         )
         await db.commit()
         return booking.id
+
+
+# ---------------------------------------------------------------------------
+# retry_confirmation_emails_job
+# ---------------------------------------------------------------------------
+
+async def _set_confirmed_at(session_factory, booking_id, confirmed_at: datetime) -> None:
+    async with session_factory() as db:
+        booking = await db.get(Booking, booking_id)
+        booking.confirmed_at = confirmed_at
+        await db.commit()
+
+
+async def _confirmation_flags(session_factory, booking_id) -> list[bool]:
+    async with session_factory() as db:
+        result = await db.execute(
+            select(Passenger.confirmation_sent).where(Passenger.booking_id == booking_id)
+        )
+        return list(result.scalars().all())
+
+
+async def test_retry_confirmation_job_reenvia_y_marca_al_pasajero(session_factory):
+    booking_id = await _seed_confirmed_booking(session_factory, departure_at=_NOW + timedelta(days=5))
+    await _set_confirmed_at(session_factory, booking_id, _NOW - timedelta(hours=2))
+
+    with (
+        patch.object(reminders, "AsyncSessionLocal", session_factory),
+        _frozen_now(_NOW),
+        patch("resend.Emails.send", return_value={"id": "ok"}) as send,
+    ):
+        await reminders.retry_confirmation_emails_job()
+        # Segunda corrida: ya está marcado, no se reenvía.
+        await reminders.retry_confirmation_emails_job()
+
+    assert send.call_count == 1
+    assert await _confirmation_flags(session_factory, booking_id) == [True]
+
+
+async def test_retry_confirmation_job_si_sigue_fallando_queda_pendiente(session_factory):
+    booking_id = await _seed_confirmed_booking(session_factory, departure_at=_NOW + timedelta(days=5))
+    await _set_confirmed_at(session_factory, booking_id, _NOW - timedelta(hours=2))
+
+    with (
+        patch.object(reminders, "AsyncSessionLocal", session_factory),
+        _frozen_now(_NOW),
+        patch("resend.Emails.send", side_effect=RuntimeError("smtp caído")),
+    ):
+        await reminders.retry_confirmation_emails_job()
+
+    assert await _confirmation_flags(session_factory, booking_id) == [False]
+
+
+async def test_retry_confirmation_job_respeta_gracia_y_tope_de_48h(session_factory):
+    # Recién confirmada (el envío original puede estar en curso) y vencida (más de 48 h).
+    recent = await _seed_confirmed_booking(session_factory, departure_at=_NOW + timedelta(days=5))
+    await _set_confirmed_at(session_factory, recent, _NOW - timedelta(minutes=1))
+
+    with (
+        patch.object(reminders, "AsyncSessionLocal", session_factory),
+        _frozen_now(_NOW),
+        patch("resend.Emails.send", return_value={"id": "ok"}) as send,
+    ):
+        await reminders.retry_confirmation_emails_job()
+        await _set_confirmed_at(session_factory, recent, _NOW - timedelta(hours=49))
+        await reminders.retry_confirmation_emails_job()
+
+    send.assert_not_called()
+    assert await _confirmation_flags(session_factory, recent) == [False]
 
 
 async def test_send_reminders_job_envia_reminder_y_marca_sent(session_factory):

@@ -47,9 +47,13 @@ Qué rutas existen hoy dentro de `app/` y en qué estado está cada una: no lo l
 
 ---
 
-## El pago no es una página de este frontend
+## El pago: página `/pago` + checkout externo
 
-`/compra/[tripId]` termina en un redirect (`window.location.href = data.init_point`) al checkout hosteado de MercadoPago. El pago en sí ocurre ahí, no en una ruta propia. **No va a existir una ruta `/pago` en este frontend** — no es que esté pendiente, es que no aplica a esta arquitectura. Si estás buscando dónde se maneja el pago, es el punto donde se pide `init_point` al backend y se redirige, no una página nueva a construir.
+`/compra/[tripId]` crea la reserva (`POST /bookings`, que ya no habla con MercadoPago) y navega a `/pago?booking_id=…&token=…`. Esa página muestra el resumen, deja elegir el medio de pago y pide el checkout con `POST /bookings/{id}/payments`; el backend devuelve `redirect_url` y el pago en sí ocurre en el sitio del proveedor, no acá.
+
+Los medios disponibles salen de `PAYMENT_METHODS` en `src/app/pago/PagoContent.tsx` y del `Literal` de `PaymentCreate` en el backend — mirá el código, no los listes acá.
+
+`/pago?dev=1` agrega un panel de desarrollador para crear pagos de prueba sin reserva (`POST /dev/payments`, que el backend solo monta si `ENVIRONMENT != "production"`).
 
 Navegación entre pasos del flujo vía query params:
 - /asientos/[tripId]?passengers=2

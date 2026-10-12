@@ -48,6 +48,10 @@ env = [
     "MERCADOPAGO_ACCESS_TOKEN=TEST-fake-access-token",
     "MERCADOPAGO_WEBHOOK_SECRET=fake-webhook-secret",
     "RESEND_API_KEY=re_fake_api_key",
+    # Fijadas para que los tests no lean el .env local: con SMTP_HOST definido
+    # ahí, la suite intentaría enviar mails reales.
+    "EMAIL_FROM=no-reply@expresorioparana.com",
+    "SMTP_HOST=",
     "JWT_EXPIRY_MINUTES=60",
     "BOOKING_EXPIRY_MINUTES=15",
     "ENVIRONMENT=dev",

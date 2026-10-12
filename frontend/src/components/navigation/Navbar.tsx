@@ -14,8 +14,6 @@ interface NavbarProps {
 
 const NAV_LINKS = [
   { label: "Destinos", href: "/destinos" },
-  { label: "Estado del viaje", href: "/estado-viaje" },
-  { label: "Mis reservas", href: "/mis-reservas" },
   { label: "Preguntas frecuentes", href: "/preguntas-frecuentes" },
 ];
 
@@ -55,7 +53,7 @@ export function Navbar({ transparent = true, static: isStatic = false }: NavbarP
       {/* Logo — siempre visible */}
       <Link href="/" style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
         <Image
-          src="/assets/logo-rioparana.png"
+          src="/assets/logo-rioparana.webp"
           alt="Expreso Río Paraná"
           height={40}
           width={160}

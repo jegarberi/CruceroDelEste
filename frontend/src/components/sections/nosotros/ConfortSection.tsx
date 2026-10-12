@@ -5,7 +5,7 @@ export default function ConfortSection() {
         <div className="relative group">
           <div className="absolute -inset-4 bg-[#b5ecf1] rounded-xl -rotate-2 z-0 group-hover:rotate-0 transition-transform" />
           <div className="relative h-96 w-full z-10 overflow-hidden">
-            <img src="/bus-dentro.png" alt="Interior del bus" className="w-full h-full object-cover" />
+            <img src="/bus-dentro.webp" alt="Interior del bus" className="w-full h-full object-cover" />
           </div>
         </div>
 

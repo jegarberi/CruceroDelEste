@@ -217,7 +217,6 @@ class Seat(Base):
     )
 
     trip = relationship("Trip", back_populates="seats")
-    passenger = relationship("Passenger", back_populates="seat", uselist=False)
 
 
 class PriceTranche(Base):

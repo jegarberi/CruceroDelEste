@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
-import { act } from "@testing-library/react";
+import { render, screen, act } from "@testing-library/react";
 import { ConfirmacionContent } from "../ConfirmacionContent";
-import { getBooking } from "@/api";
+import { getBooking, releaseBooking, verifyBookingPayment } from "@/api";
+import type { BookingRead } from "@/types/trips";
 
 // Primer uso de vi.useFakeTimers() en este repo.
 //
@@ -11,10 +11,6 @@ import { getBooking } from "@/api";
 // sus reintentos, así que nunca dispara y el test hace timeout. La solución
 // correcta: usar act(async () => { ... }) para forzar que React procese los
 // state updates y las promesas pendientes, SIN depender de setTimeout.
-//
-// Para los tests 9, 10, 11 getBooking resuelve/rechaza de forma inmediata
-// (no hay setTimeout que esperar), así que act(async () => {}) con un
-// pequeño flush de microtasks es suficiente.
 
 let mockSearchParams = new URLSearchParams();
 
@@ -24,21 +20,24 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/api", () => ({
   getBooking: vi.fn(),
+  verifyBookingPayment: vi.fn(),
+  releaseBooking: vi.fn(),
 }));
 
-function makeBookingRead(overrides: { status?: string } = {}) {
+function makeBookingRead(overrides: Partial<BookingRead> = {}): BookingRead {
   return {
     id: "booking-1",
     booking_code: "ERP-7K3M-9QX2",
     status: "confirmed",
     contact_email: "ana@example.com",
     total_amount: 25000,
+    expires_at: "2026-01-01T00:15:00Z",
     trip: {
       id: "trip-1",
       route: {
         id: "route-1",
-        origin_stop: { id: "s1", name: "Retiro", country: "AR" as const, province: null, created_at: "" },
-        destination_stop: { id: "s2", name: "Asunción", country: "PY" as const, province: null, created_at: "" },
+        origin_stop: { id: "s1", name: "Retiro", country: "AR", province: null, created_at: "" },
+        destination_stop: { id: "s2", name: "Asunción", country: "PY", province: null, created_at: "" },
       },
       departure_at: "2026-09-01T10:00:00Z",
       arrival_at: "2026-09-02T03:00:00Z",
@@ -93,6 +92,41 @@ describe("ConfirmacionContent — status != approved (sin polling)", () => {
   // Resultado: status="failure" hace que "failure !== pending" sea true,
   // pero "failure === pending" es false → el bloque no renderiza →
   // "Hubo un problema con tu pago" no aparece → test falla.
+  // Recargar /confirmacion (la URL ya quedó sin query) no es un pago rechazado.
+  it("sin status no muestra el error de pago", () => {
+    mockSearchParams = new URLSearchParams("");
+    render(<ConfirmacionContent />);
+
+    expect(screen.getByText("No hay un pago para mostrar acá")).toBeInTheDocument();
+    expect(screen.queryByText("Hubo un problema con tu pago")).not.toBeInTheDocument();
+  });
+
+  // Sabotaje de lógica: en el JSX de ConfirmacionContent, cambiar
+  //   {status !== "" && status !== "null" && status !== "approved" && ...
+  // quitando `status !== "null"`.
+  // Resultado: el abandono vuelve a mostrarse como pago rechazado → test falla.
+  it("status=null (volvió de MercadoPago sin pagar) ofrece reintentar o elegir otros asientos, sin error de pago", async () => {
+    vi.mocked(getBooking).mockResolvedValueOnce(makeBookingRead({ status: "pending_payment" }));
+    mockSearchParams = new URLSearchParams(
+      "booking_id=booking-1&token=tok-1&status=null&payment_id=null",
+    );
+    render(<ConfirmacionContent />);
+
+    expect(screen.getByText("No completaste el pago")).toBeInTheDocument();
+    expect(screen.queryByText("Hubo un problema con tu pago")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Volver a pagar →" })).toHaveAttribute(
+      "href",
+      "/pago?booking_id=booking-1&token=tok-1",
+    );
+    // Elegir otros asientos libera primero los de la reserva abandonada.
+    vi.mocked(releaseBooking).mockResolvedValueOnce(new Response("{}"));
+    const other = await screen.findByRole("button", { name: "Elegir otros asientos →" });
+    await act(async () => {
+      other.click();
+    });
+    expect(vi.mocked(releaseBooking)).toHaveBeenCalledWith("booking-1", "tok-1");
+  });
+
   it("status=failure muestra 'Hubo un problema con tu pago' sin llamar a getBooking", () => {
     mockSearchParams = new URLSearchParams("status=failure&payment_id=999");
     render(<ConfirmacionContent />);
@@ -113,10 +147,48 @@ describe("ConfirmacionContent — status=approved, polling (fake timers)", () =>
       "status=approved&booking_id=booking-1&token=tok-abc&payment_id=mp-123"
     );
     vi.mocked(getBooking).mockReset();
+    vi.mocked(verifyBookingPayment).mockReset();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  // Al volver de MercadoPago se le pide al backend que verifique el pago antes
+  // de empezar a consultar la reserva, para no depender del webhook.
+  it("verifica el pago con el backend antes del primer poll", async () => {
+    const order: string[] = [];
+    vi.mocked(verifyBookingPayment).mockImplementation(async () => {
+      order.push("verify");
+      return new Response("{}");
+    });
+    vi.mocked(getBooking).mockImplementation(async () => {
+      order.push("poll");
+      return makeBookingRead({ status: "confirmed" });
+    });
+
+    render(<ConfirmacionContent />);
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    expect(verifyBookingPayment).toHaveBeenCalledWith("booking-1", "tok-abc", "mp-123");
+    expect(order).toEqual(["verify", "poll"]);
+    expect(screen.getByText("¡Compra confirmada!")).toBeInTheDocument();
+  });
+
+  it("si la verificación falla igual consulta la reserva", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(verifyBookingPayment).mockRejectedValue(new Error("network"));
+    vi.mocked(getBooking).mockResolvedValueOnce(makeBookingRead({ status: "confirmed" }));
+
+    render(<ConfirmacionContent />);
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    expect(screen.getByText("¡Compra confirmada!")).toBeInTheDocument();
+    vi.mocked(console.error).mockRestore();
   });
 
   // test 9
@@ -165,39 +237,24 @@ describe("ConfirmacionContent — status=approved, polling (fake timers)", () =>
     expect(screen.getByText("Tu reserva venció")).toBeInTheDocument();
   });
 
-  // test 11
+  // test 11 + F
   //
-  // Sabotaje de lógica: en el catch de poll(), cambiar
+  // Sabotaje de lógica (a): en el catch de poll(), cambiar
   //   setPollState("token_invalid");
   // por
   //   setPollState("exhausted");
   // Resultado: getBooking lanzando va a "exhausted" en vez de "token_invalid" →
   // se renderiza la pantalla de timeout, no "¡Compra registrada!" → test falla.
-  it("muestra '¡Compra registrada!' cuando getBooking lanza (token inválido/vencido)", async () => {
-    vi.mocked(getBooking).mockRejectedValueOnce(new Error("401 Unauthorized"));
-
-    render(<ConfirmacionContent />);
-
-    await act(async () => {
-      await vi.runAllTimersAsync();
-    });
-
-    expect(screen.getByText("¡Compra registrada!")).toBeInTheDocument();
-    // Confirmar que NO se muestra el mensaje de "fallo de pago" (mensaje diferente).
-    expect(screen.queryByText("Hubo un problema con tu pago")).not.toBeInTheDocument();
-  });
-
-  // test F: getBooking rechaza → poll se detiene; exactamente 1 llamada tras 60s
   //
-  // Sabotaje de lógica: en el catch de poll(), quitar el `return` final:
+  // Sabotaje de lógica (b): en el catch de poll(), quitar el `return` final:
   //   setPollState("token_invalid");
   //   replaceUrlOnce();
   //   // return; ← eliminado
   // Resultado: la ejecución cae fuera del catch con `data` sin inicializar.
   // `data.status` lanza TypeError → promesa rechazada sin manejar →
   // vitest detecta el rechazo y falla el test.
-  it("getBooking rechaza → poll se detiene: exactamente 1 llamada tras avanzar 60s", async () => {
-    vi.mocked(getBooking).mockRejectedValueOnce(new Error("401"));
+  it("getBooking lanza → '¡Compra registrada!' y el poll se detiene (1 llamada tras 60s)", async () => {
+    vi.mocked(getBooking).mockRejectedValueOnce(new Error("401 Unauthorized"));
 
     render(<ConfirmacionContent />);
 
@@ -205,6 +262,9 @@ describe("ConfirmacionContent — status=approved, polling (fake timers)", () =>
       await vi.advanceTimersByTimeAsync(60_000);
     });
 
+    expect(screen.getByText("¡Compra registrada!")).toBeInTheDocument();
+    // Confirmar que NO se muestra el mensaje de "fallo de pago" (mensaje diferente).
+    expect(screen.queryByText("Hubo un problema con tu pago")).not.toBeInTheDocument();
     expect(vi.mocked(getBooking)).toHaveBeenCalledTimes(1);
   });
 

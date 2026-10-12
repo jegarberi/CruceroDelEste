@@ -1,3 +1,4 @@
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import model_validator
@@ -18,9 +19,21 @@ class Settings(BaseSettings):
     # MercadoPago
     mercadopago_access_token: str
     mercadopago_webhook_secret: str
+    # False: POST /webhooks/mercadopago acknowledges and ignores payment
+    # notifications, and bookings are confirmed only by the check the
+    # confirmation page triggers (POST /bookings/{id}/payments/{pid}/verify).
+    mercadopago_webhook_enabled: bool = True
 
-    # Email
-    resend_api_key: str
+    # Email. With SMTP_HOST set, mail goes through that server; otherwise
+    # through Resend (RESEND_API_KEY).
+    resend_api_key: str = ""
+    email_from: str = "no-reply@expresorioparana.com"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    # starttls (usual on 587) | ssl (usual on 465) | none (plain, e.g. a local relay on 25)
+    smtp_security: Literal["starttls", "ssl", "none"] = "starttls"
 
     # App
     # backend_url: public base URL of this API, sent to MercadoPago as notification_url.
@@ -30,6 +43,12 @@ class Settings(BaseSettings):
     environment: str = "dev"
     booking_expiry_minutes: int = 15
     cors_origins: list[str] = ["http://localhost:3000"]
+
+    @property
+    def cookie_secure(self) -> bool:
+        # Secure cookies are dropped over plain http, so follow how this API is
+        # actually served rather than the environment name.
+        return self.backend_url.startswith("https://")
 
     @model_validator(mode="after")
     def _validate_backend_url(self) -> "Settings":

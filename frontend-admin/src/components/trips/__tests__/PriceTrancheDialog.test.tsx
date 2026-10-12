@@ -27,10 +27,12 @@ vi.mock("sonner", () => ({
 
 const TRANCHE: PriceTrancheRead = {
   id: "tranche-1",
+  trip_id: "trip-1",
   seat_type: "cama",
   min_sold: 0,
   max_sold: 5,
   price: 10000,
+  created_at: "2026-01-01T00:00:00Z",
 };
 
 const TRIP_ID = "trip-1";

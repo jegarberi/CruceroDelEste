@@ -558,6 +558,22 @@ export function AsientosContent({ tripId }: AsientosContentProps) {
             marginTop: "16px",
             width: "100%",
           }}>
+            <button
+              type="button"
+              onClick={() => router.back()}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--color-primary)",
+                fontFamily: "var(--font-body)",
+                fontWeight: 600,
+                fontSize: "14px",
+                padding: "0 0 12px 0",
+                cursor: "pointer",
+              }}
+            >
+              ← Volver
+            </button>
             <BlueButton
               variant="blue"
               onClick={handleContinuar}

@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { AxiosHeaders, type InternalAxiosRequestConfig } from "axios";
 import apiClient from "@/api/client";
 
 // Session auth is a httpOnly cookie set by POST /admin/login and sent
@@ -17,13 +18,50 @@ function responseErrorInterceptor(): RejectedResponse {
   return handler.rejected;
 }
 
-describe("apiClient", () => {
-  it("no registra un interceptor de request (no hay token que inyectar)", () => {
-    const requestHandlers = (apiClient.interceptors.request as unknown as {
-      handlers: unknown[];
-    }).handlers;
+type RequestInterceptor = (
+  config: InternalAxiosRequestConfig
+) => Promise<InternalAxiosRequestConfig>;
 
-    expect(requestHandlers.filter(Boolean)).toHaveLength(0);
+function requestInterceptor(): RequestInterceptor {
+  const handler = (apiClient.interceptors.request as unknown as {
+    handlers: { fulfilled: RequestInterceptor }[];
+  }).handlers[0];
+  return handler.fulfilled;
+}
+
+function config(method: string): InternalAxiosRequestConfig {
+  return { method, headers: new AxiosHeaders() } as InternalAxiosRequestConfig;
+}
+
+// El interceptor de request no inyecta la sesión (esa viaja en la cookie
+// httpOnly): solo agrega el token CSRF que el backend exige en todo request
+// que modifica datos.
+describe("interceptor de request (CSRF)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("no toca los GET ni pide el token", async () => {
+    const get = vi.spyOn(apiClient, "get");
+
+    const result = await requestInterceptor()(config("get"));
+
+    expect(result.headers.has("X-CSRF-Token")).toBe(false);
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("agrega X-CSRF-Token a POST/PATCH/PUT/DELETE pidiendo el token una sola vez", async () => {
+    const get = vi
+      .spyOn(apiClient, "get")
+      .mockResolvedValue({ data: { csrf_token: "tok-1" } });
+
+    for (const method of ["post", "patch", "put", "delete"]) {
+      const result = await requestInterceptor()(config(method));
+      expect(result.headers.get("X-CSRF-Token")).toBe("tok-1");
+    }
+
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledWith("/csrf-token");
   });
 });
 

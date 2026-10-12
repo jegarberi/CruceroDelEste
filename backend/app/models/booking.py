@@ -12,7 +12,6 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -112,16 +111,22 @@ class Passenger(Base):
     email = Column(String(255), nullable=False)
     phone = Column(String(30), nullable=True)
     luggage_count = Column(Integer, nullable=False, default=0, server_default="0")
+    # Set once the purchase-confirmation email went out to this passenger;
+    # retry_confirmation_emails_job re-sends to the ones still false.
+    confirmation_sent = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=sa.text("now()"))
 
     __table_args__ = (
-        UniqueConstraint("seat_id"),
+        # No unique: un asiento liberado (reserva expirada o reembolsada) se
+        # revende y conserva el pasajero anterior como historial. La
+        # exclusividad la garantiza reserve_seats (lock de fila + status).
+        Index("idx_passengers_seat", "seat_id"),
         Index("idx_passengers_booking", "booking_id"),
         Index("idx_passengers_email", "email"),
     )
 
     booking = relationship("Booking", back_populates="passengers")
-    seat = relationship("Seat", back_populates="passenger")
+    seat = relationship("Seat")
 
 
 class RefundRequest(Base):

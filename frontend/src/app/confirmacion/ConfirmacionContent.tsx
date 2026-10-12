@@ -15,7 +15,7 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { getBooking } from "@/api";
+import { getBooking, releaseBooking, verifyBookingPayment } from "@/api";
 import type { BookingRead } from "@/types/trips";
 
 function toArDateTime(iso: string): string {
@@ -64,10 +64,16 @@ const XIcon = () => (
 export function ConfirmacionContent() {
   const searchParams = useSearchParams();
 
-  const status = searchParams.get("status") ?? "";
-  const externalReference = searchParams.get("booking_id") ?? searchParams.get("external_reference") ?? "";
-  const paymentId = searchParams.get("payment_id") ?? "";
-  const token = searchParams.get("token") ?? "";
+  // Foto de la query al montar. replaceUrlOnce() la borra de la URL más abajo y
+  // Next sincroniza useSearchParams con history.replaceState: leyendo en vivo,
+  // `status` pasaba a "" tras la primera consulta, se cortaba el polling y la
+  // página mostraba "Hubo un problema con tu pago" aunque el pago estuviera aprobado.
+  const [{ status, externalReference, paymentId, token }] = useState(() => ({
+    status: searchParams.get("status") ?? "",
+    externalReference: searchParams.get("booking_id") ?? searchParams.get("external_reference") ?? "",
+    paymentId: searchParams.get("payment_id") ?? "",
+    token: searchParams.get("token") ?? "",
+  }));
 
   const [booking, setBooking] = useState<BookingRead | null>(null);
   const [pollState, setPollState] = useState<
@@ -144,13 +150,60 @@ export function ConfirmacionContent() {
       timeoutId = setTimeout(() => poll(attempt + 1), nextDelayMs(attempt));
     }
 
-    poll(0);
+    async function start() {
+      // MercadoPago devuelve al comprador con el id del pago: le pedimos al
+      // backend que lo verifique ya, en vez de esperar a que llegue el webhook.
+      // Si falla no importa: el polling de abajo sigue cubriendo el caso en que
+      // la confirmación llega por webhook.
+      if (paymentId) {
+        try {
+          await verifyBookingPayment(externalReference, token, paymentId);
+        } catch (error) {
+          console.error("[ConfirmacionContent] verify error:", error);
+        }
+      }
+      if (!cancelled) poll(0);
+    }
+
+    start();
 
     return () => {
       cancelled = true;
       if (timeoutId !== undefined) clearTimeout(timeoutId);
     };
+  }, [status, externalReference, token, paymentId]);
+
+  // Volvió de MercadoPago sin pagar: el viaje y la cantidad de pasajeros salen
+  // de la reserva, para poder ofrecerle volver a la selección de asientos.
+  const [abandonedBooking, setAbandonedBooking] = useState<BookingRead | null>(null);
+  useEffect(() => {
+    if (status !== "null" || !externalReference || !token) return;
+    let cancelled = false;
+    getBooking(externalReference, token)
+      .then((data) => {
+        if (!cancelled) setAbandonedBooking(data);
+      })
+      .catch((error) => console.error("[ConfirmacionContent] fetch error:", error));
+    return () => {
+      cancelled = true;
+    };
   }, [status, externalReference, token]);
+
+  const [releasing, setReleasing] = useState(false);
+
+  // Libera los asientos de la reserva abandonada antes de volver al mapa: si no,
+  // seguirían ocupados hasta que venza y el comprador no podría volver a elegirlos.
+  async function handleChooseOtherSeats() {
+    if (!abandonedBooking) return;
+    setReleasing(true);
+    try {
+      await releaseBooking(externalReference, token);
+    } catch (error) {
+      // Igual lo llevamos al mapa: en el peor caso los ve ocupados hasta que venzan.
+      console.error("[ConfirmacionContent] release error:", error);
+    }
+    window.location.href = `/asientos/${abandonedBooking.trip.id}?passengers=${abandonedBooking.passengers.length}`;
+  }
 
   return (
     <div
@@ -535,7 +588,109 @@ export function ConfirmacionContent() {
           </div>
         )}
 
-        {status !== "approved" && status !== "pending" && (
+        {/* Sin status no hay resultado que mostrar: es alguien que recargó o abrió
+            /confirmacion a mano (la URL se limpia tras la primera consulta). No es
+            un pago rechazado, así que no se muestra como tal. */}
+        {status === "" && (
+          <div style={cardStyle}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}>
+              <ClockIcon />
+              <h1
+                style={{
+                  fontFamily: "var(--font-display)",
+                  color: "var(--color-text-primary)",
+                  fontWeight: 700,
+                  fontSize: "28px",
+                  textAlign: "center",
+                  margin: 0,
+                }}
+              >
+                No hay un pago para mostrar acá
+              </h1>
+              <p
+                style={{
+                  fontFamily: "var(--font-body)",
+                  color: "var(--color-text-muted)",
+                  fontSize: "16px",
+                  textAlign: "center",
+                  margin: 0,
+                }}
+              >
+                Si acabás de pagar, revisá tu email: ahí te llega la confirmación con los datos de tu pasaje.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* MercadoPago vuelve con status=null (literal) cuando el comprador toca
+            "volver a la tienda" sin pagar. No hubo pago, así que no es un rechazo:
+            la reserva sigue pendiente y puede reintentar hasta que expire. */}
+        {status === "null" && (
+          <div style={cardStyle}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}>
+              <ClockIcon />
+              <h1
+                style={{
+                  fontFamily: "var(--font-display)",
+                  color: "var(--color-text-primary)",
+                  fontWeight: 700,
+                  fontSize: "28px",
+                  textAlign: "center",
+                  margin: 0,
+                }}
+              >
+                No completaste el pago
+              </h1>
+              <p
+                style={{
+                  fontFamily: "var(--font-body)",
+                  color: "var(--color-text-muted)",
+                  fontSize: "16px",
+                  textAlign: "center",
+                  margin: 0,
+                }}
+              >
+                Tus asientos siguen reservados por unos minutos. Podés volver a intentarlo.
+              </p>
+              {externalReference && token && (
+                <a
+                  href={`/pago?booking_id=${encodeURIComponent(externalReference)}&token=${encodeURIComponent(token)}`}
+                  style={{
+                    fontFamily: "var(--font-body)",
+                    color: "var(--color-primary)",
+                    fontSize: "15px",
+                    fontWeight: 600,
+                    textAlign: "center",
+                    marginTop: "12px",
+                  }}
+                >
+                  Volver a pagar →
+                </a>
+              )}
+              {abandonedBooking && (
+                <button
+                  type="button"
+                  disabled={releasing}
+                  onClick={handleChooseOtherSeats}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    fontFamily: "var(--font-body)",
+                    color: "var(--color-primary)",
+                    fontSize: "15px",
+                    fontWeight: 600,
+                    textAlign: "center",
+                  }}
+                >
+                  {releasing ? "Liberando asientos…" : "Elegir otros asientos →"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {status !== "" && status !== "null" && status !== "approved" && status !== "pending" && (
           <div style={cardStyle}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}>
               <XIcon />

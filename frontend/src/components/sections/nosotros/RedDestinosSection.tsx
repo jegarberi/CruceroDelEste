@@ -28,7 +28,7 @@ export default function RedDestinosSection() {
         <div className="md:col-span-3 h-[280px] md:h-[500px] bg-[#dadada] relative overflow-hidden group rounded-xl md:rounded-none">
           <div
             className="absolute inset-0 grayscale group-hover:grayscale-0 transition-all duration-700 bg-cover bg-center"
-            style={{ backgroundImage: "url('/mapa.png')" }}
+            style={{ backgroundImage: "url('/mapa.webp')" }}
           />
           <div className="absolute bottom-4 right-4 bg-[#132691] p-2 md:p-4 text-white shadow-xl">
             <div className="text-[10px] md:text-[13px] tracking-tighter uppercase">Cobertura Federal</div>

@@ -107,6 +107,10 @@ export function DateInput({ label, value, onChange, minDate, defaultMonth }: Dat
           selected={value}
           onSelect={handleSelect}
           captionLayout="dropdown"
+          // Sin esto el selector lista 100 años hacia atrás y ninguno hacia
+          // adelante: en diciembre no se podía buscar un viaje de enero.
+          startMonth={new Date()}
+          endMonth={new Date(new Date().getFullYear() + 1, 11)}
           disabled={isDisabled}
           showOutsideDays
           month={currentMonth}

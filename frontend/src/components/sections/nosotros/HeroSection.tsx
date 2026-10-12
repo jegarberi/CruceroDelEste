@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function HeroSection() {
   return (
     <section className="relative flex items-start justify-center pt-20 pb-0 px-6 min-h-[700px] overflow-hidden md:py-20">
@@ -5,7 +7,7 @@ export default function HeroSection() {
         <img
           alt="Background bus"
           className="w-full h-full object-cover"
-          src="/micro-ruta-nos.png"
+          src="/micro-ruta-nos.webp"
         />
         <div className="absolute inset-0 bg-[#132691]/40" />
       </div>
@@ -21,26 +23,26 @@ export default function HeroSection() {
             Un legado de décadas conectando personas, sueños y destinos con la precisión técnica y el calor humano que solo Expreso Río Paraná puede ofrecer.
           </p>
           <div className="hidden md:block">
-            <a
+            <Link
               className="inline-block bg-[#e3000f] text-white px-6 py-3 text-[16px] md:px-10 md:py-4 md:text-lg font-bold rounded-[4px] shadow-lg hover:bg-red-700 transform hover:-translate-y-1 transition-all duration-200"
-              href="#"
+              href="/#buscar"
             >
               Comprar Pasajes
-            </a>
+            </Link>
           </div>
         </div>
-        <a
+        <Link
           className="md:hidden inline-block bg-[#e3000f] text-white px-6 py-3 text-[16px] font-bold rounded-[4px] shadow-lg hover:bg-red-700 transform hover:-translate-y-1 transition-all duration-200"
-          href="#"
+          href="/#buscar"
           style={{ marginTop: "auto" }}
         >
           Comprar Pasajes
-        </a>
+        </Link>
         <div className="hidden md:block w-1/3">
           <img
             alt="Expreso Río Paraná Logo"
             className="w-full h-auto"
-            src="/ExpresoRioParana-Logo.png"
+            src="/ExpresoRioParana-Logo.webp"
           />
         </div>
       </div>
