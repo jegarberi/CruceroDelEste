@@ -13,6 +13,7 @@ type ResultState =
   | { kind: "email_not_found" }
   | { kind: "not_confirmed_or_missing" }
   | { kind: "rate_limited" }
+  | { kind: "refund_failed" }
   | { kind: "error" };
 
 const BOOKING_CODE_RE = /^ERP-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/;
@@ -69,6 +70,12 @@ function ResultBanner({ result }: { result: ResultState }) {
       border: "#fecaca",
       title: "Demasiados intentos",
       body: "Esperá unos minutos antes de volver a intentarlo.",
+    },
+    refund_failed: {
+      bg: "#fef2f2",
+      border: "#fecaca",
+      title: "No pudimos procesar el reembolso",
+      body: "Tu solicitud quedó registrada, pero el medio de pago no pudo completar el reembolso. Intentá nuevamente en unos minutos o contactate con nuestra administración.",
     },
     error: {
       bg: "#fef2f2",
@@ -150,6 +157,12 @@ export function ArrepentimientoContent() {
 
       if (res.status === 429) {
         setResult({ kind: "rate_limited" });
+        return;
+      }
+
+      // El medio de pago rechazó el reembolso (la solicitud ya quedó registrada).
+      if (res.status === 424) {
+        setResult({ kind: "refund_failed" });
         return;
       }
 

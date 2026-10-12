@@ -259,7 +259,9 @@ async def create_refund_request_endpoint(
             booking.mp_payment_id,
             exc.status_code,
         )
-        raise HTTPException(status_code=502, detail="payment_gateway_error") from exc
+        # 424, not 502: the reverse proxy replaces a 502 with its own error page
+        # (no CORS headers), so the browser could not read why the refund failed.
+        raise HTTPException(status_code=424, detail="payment_gateway_error") from exc
 
     await mark_booking_refunded(db, booking.id)
     await db.commit()

@@ -182,7 +182,7 @@ def mock_mp_sdk():
         },
     }
 
-    mock_sdk.payment.return_value.refunds.return_value = {
+    mock_sdk.refund.return_value.create.return_value = {
         "status": 201,
         "response": {"id": 12345678},
     }

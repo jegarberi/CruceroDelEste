@@ -61,6 +61,18 @@ describe("ArrepentimientoContent — branching de status code", () => {
     });
   });
 
+  it("424 (el medio de pago rechazó el reembolso) avisa que la solicitud quedó registrada", async () => {
+    refundRequestMock.mockResolvedValueOnce(jsonResponse(424, { detail: "payment_gateway_error" }));
+    render(<ArrepentimientoContent />);
+
+    await submitForm();
+
+    await waitFor(() => {
+      expect(screen.getByText("No pudimos procesar el reembolso")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Ocurrió un error")).not.toBeInTheDocument();
+  });
+
   it.each([500, 502])(
     "%i cae al mensaje genérico de error (decisión explícita del ticket)",
     async (status) => {

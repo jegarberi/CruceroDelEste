@@ -91,8 +91,12 @@ test.describe("Devolución — botón de arrepentimiento y reembolsos", () => {
     const trip = await api.createTrip();
     const booking = await confirmedBooking(trip.id, "5");
 
+    // 424 = MercadoPago rechazó el reembolso. Un 500 sería un error nuestro: esta
+    // prueba antes aceptaba cualquier error y tapó una llamada mal hecha al SDK.
+    const response = page.waitForResponse((r) => r.url().includes("/refund-request") && r.request().method() === "POST");
     await requestRefund(page, booking.booking_code, PASSENGER.email);
-    await expect(page.getByText("Ocurrió un error")).toBeVisible({ timeout: 30_000 });
+    expect((await response).status()).toBe(424);
+    await expect(page.getByText("No pudimos procesar el reembolso")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText("Solicitud de cancelación confirmada")).toHaveCount(0);
 
     expect(bookingStatus(booking.id)).toBe("confirmed");
